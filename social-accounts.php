@@ -12,7 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_account'])) {
     }
     
     $platform = clean($_POST['platform']);
-    $username = clean($_POST['username']);
+    $username = ltrim(clean($_POST['username']), '@');
     $password = $_POST['password']; 
     $apiKey   = clean($_POST['api_key'] ?? '');
     $apiSecret = clean($_POST['api_secret'] ?? '');
@@ -75,6 +75,8 @@ $platforms = [
     ['id' => 'wordpress',   'name' => 'WordPress.com',     'icon' => 'fab fa-wordpress', 'needs_api' => true,  'api_url' => 'https://developer.wordpress.com/apps/'],
     ['id' => 'blogger',     'name' => 'Blogger.com',       'icon' => 'fab fa-blogger',   'needs_api' => true,  'api_url' => 'https://console.cloud.google.com/apis/credentials'],
     ['id' => 'tumblr',      'name' => 'Tumblr',            'icon' => 'fab fa-tumblr',    'needs_api' => true,  'api_url' => 'https://www.tumblr.com/oauth/apps'],
+    ['id' => 'devto',       'name' => 'DEV Community',     'icon' => 'fab fa-dev',       'needs_api' => true,  'api_url' => 'https://dev.to/settings/extensions', 'login_only' => true, 'api_only' => true],
+    ['id' => 'diigo',       'name' => 'Diigo',             'icon' => 'fas fa-bookmark',  'needs_api' => true,  'api_url' => 'https://www.diigo.com/api_keys/new/', 'login_only' => true],
 
     // ── Selenium browser automation (email+password) ──────────
     ['id' => 'pinterest',   'name' => 'Pinterest',         'icon' => 'fab fa-pinterest', 'needs_api' => false, 'api_url' => '', 'login_only' => true,
@@ -85,6 +87,8 @@ $platforms = [
     // ── Email+Password platforms ──────────────────────────────
     ['id' => 'substack',    'name' => 'Substack',          'icon' => 'fas fa-newspaper', 'needs_api' => false, 'api_url' => '', 'login_only' => true],
     ['id' => 'livejournal', 'name' => 'LiveJournal',       'icon' => 'fas fa-journal-whills', 'needs_api' => false, 'api_url' => '', 'login_only' => true],
+    ['id' => 'penzu',       'name' => 'Penzu',             'icon' => 'fas fa-pen-fancy', 'needs_api' => false, 'api_url' => '', 'login_only' => true,
+     'selenium' => true, 'note' => 'Browser automation uses your Penzu account to create a journal entry.'],
     ['id' => 'justpaste',   'name' => 'JustPaste.it',      'icon' => 'fas fa-paste',     'needs_api' => false, 'api_url' => '', 'login_only' => true],
     ['id' => 'mewe',        'name' => 'MeWe',              'icon' => 'fas fa-users',     'needs_api' => false, 'api_url' => '', 'login_only' => true],
     ['id' => 'scoopit',     'name' => 'Scoop.it',          'icon' => 'fas fa-newspaper', 'needs_api' => false, 'api_url' => '', 'login_only' => true],
@@ -213,6 +217,9 @@ $platforms = [
                      value="<?= clean($saved['username'] ?? '') ?>" required>
             </div>
             
+            <?php if (!empty($p['api_only'])): ?>
+            <input type="hidden" name="password" value="">
+            <?php else: ?>
             <div class="mb-3">
               <label class="form-label">Password</label>
               <input type="password" name="password" class="form-control" 
@@ -221,6 +228,7 @@ $platforms = [
                 <small class="text-muted">Leave blank to keep existing password</small>
               <?php endif; ?>
             </div>
+            <?php endif; ?>
 
             <?php if (!empty($p['needs_api']) && empty($p['login_only'])): ?>
             <div class="alert alert-warning small">
@@ -229,7 +237,7 @@ $platforms = [
             <div class="mb-3">
               <label class="form-label">API Key / Access Token</label>
               <input type="text" name="api_key" class="form-control" 
-                     value="<?= clean($saved['api_key'] ?? '') ?>">
+                     value="<?= clean($saved['api_key'] ?? '') ?>" <?= in_array($p['id'], ['devto', 'diigo'], true) ? 'required' : '' ?>>
             </div>
             <div class="mb-3">
               <label class="form-label">API Secret / Blog ID</label>
@@ -243,7 +251,7 @@ $platforms = [
             <div class="mb-3">
               <label class="form-label">API Key / Access Token</label>
               <input type="text" name="api_key" class="form-control" 
-                     value="<?= clean($saved['api_key'] ?? '') ?>">
+                     value="<?= clean($saved['api_key'] ?? '') ?>" <?= in_array($p['id'], ['devto', 'diigo'], true) ? 'required' : '' ?>>
             </div>
             <div class="mb-3">
               <label class="form-label">API Secret / Blog ID</label>

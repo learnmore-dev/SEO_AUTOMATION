@@ -50,11 +50,29 @@ except Exception:
     sys_user = getpass.getuser()
 PROFILE_DIR = os.path.join(SCRIPT_DIR, f'chrome_profile_symbaloo_{email_hash}_{sys_user}')
 
-for lf in [os.path.join(PROFILE_DIR,'Default','LOCK'),
-           os.path.join(PROFILE_DIR,'SingletonLock')]:
+# Thoroughly clean lock files
+if os.path.exists(PROFILE_DIR):
+    for root, dirs, files in os.walk(PROFILE_DIR):
+        for f in files:
+            if f in ["SingletonLock", "SingletonCookie", "SingletonSocket", "LOCK", "lock", "DevToolsActivePort"]:
+                p_file = os.path.join(root, f)
+                try:
+                    if os.path.islink(p_file): os.unlink(p_file)
+                    else: os.remove(p_file)
+                except Exception: pass
+
+# Clear Cookies/Session storage to force fresh login each time (avoids stale redirect issues)
+cookies_dir = os.path.join(PROFILE_DIR, 'Default')
+for cookie_file in ['Cookies', 'Cookies-journal', 'Session Storage', 'Local Storage']:
+    cp = os.path.join(cookies_dir, cookie_file)
     try:
-        if os.path.exists(lf): os.remove(lf)
-    except: pass
+        if os.path.isfile(cp):
+            os.remove(cp)
+        elif os.path.isdir(cp):
+            import shutil
+            shutil.rmtree(cp, ignore_errors=True)
+    except Exception:
+        pass
 
 MIX_URL = "https://www.symbaloo.com/home/mix/13ePQXNM4g"
 
@@ -64,128 +82,291 @@ def log(msg):
 def result(success, url='', error=''):
     print(json.dumps({"success": success, "url": url, "error": error}), flush=True)
 
-def close_consent_modal(driver):
+def dismiss_overlays(driver):
+    """Dismisses cookie consent, AdBlock dialogs, and Symbaloo Welcome onboarding tours.
+    IMPORTANT: Does NOT remove login dialog/form elements."""
     try:
-        for sel in [
-            "//button[contains(., 'CONFIRM')]",
-            "//button[contains(., 'Confirm')]",
-            "//button[contains(., 'AGREE')]",
-            "//button[contains(., 'Agree')]",
-            "#accept-btn",
-            ".qc-cmp2-summary-buttons button",
-            "button[class*='confirm']",
-            "button[class*='accept']"
-        ]:
+        driver.execute_script("""
+            // 1. Remove CMP consent overlays & iframes
+            document.querySelectorAll('iframe[id*="sp_message"], iframe[title*="Consent"], div[id*="sp_message"], #qc-cmp2-container, .qc-cmp2-container, .qc-cmp-cleanslate, #CybotCookiebotDialog, #onetrust-banner-sdk').forEach(el => el.remove());
+            
+            // 2. Remove AdBlock overlays - but only if they do NOT contain login inputs
+            document.querySelectorAll('embedded-app-container[key="adBlockInformationDialog"], div[key="adBlockInformationDialog"]').forEach(el => {
+                if (!el.querySelector('input[type="email"], input[type="password"]')) el.remove();
+            });
+            // aria-labelledby="dialogTitle" can match login form - skip it entirely
+            
+            // 3. Remove/dismiss Welcome tour popup and Skip Tour buttons
+            Array.from(document.querySelectorAll('button, a')).forEach(b => {
+                const t = (b.innerText || '').trim().toLowerCase();
+                if (t === 'skip tour' || t.includes('skip tour')) {
+                    try { b.click(); } catch(e){}
+                }
+            });
+            // Only remove Welcome tour dialogs that do NOT contain login inputs
+            document.querySelectorAll('[role="dialog"], .modal, [class*="Modal"], [class*="dialog"]').forEach(el => {
+                const hasLoginInput = el.querySelector('input[type="email"], input[type="password"], #loginDialogEmailInput');
+                if (!hasLoginInput) {
+                    const text = (el.innerText || '');
+                    if (text.includes('Welcome to Symbaloo') || text.includes('Skip Tour')) {
+                        el.remove();
+                    }
+                }
+            });
+        """)
+        # Native click for any visible Skip Tour buttons
+        for sel in ["//button[contains(., 'Skip Tour')]", "//a[contains(., 'Skip Tour')]", "//button[contains(., 'Skip')]"]:
             try:
-                agree = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, sel) if sel.startswith('/') else (By.CSS_SELECTOR, sel)))
-                agree.click()
-                log(f"Symbaloo: Cookie Consent Accepted via {sel}.")
-                time.sleep(3)
-                return True
-            except:
-                continue
+                b = driver.find_element(By.XPATH, sel)
+                if b.is_displayed():
+                    b.click()
+                    log("Symbaloo: Clicked 'Skip Tour' natively")
+            except: pass
     except Exception as e:
-        log(f"Symbaloo: Consent check error: {e}")
-    return False
+        log(f"Symbaloo: Overlay cleanup note: {e}")
+
+def close_consent_modal(driver):
+    return dismiss_overlays(driver)
 
 def close_adblock_modal(driver):
-    try:
-        # Check if adblock text is present before trying to close
-        body_text = ""
-        try:
-            body_text = driver.find_element(By.TAG_NAME, 'body').text
-        except: pass
-
-        if "ad-block" not in body_text.lower() and "adblock" not in body_text.lower():
-            return False
-
-        log("Symbaloo: Adblock warning detected, closing...")
-        for sel in [
-            "button[aria-label*='Close' i]",
-            "button[class*='close' i]",
-            "[class*='close-btn' i]",
-            "[class*='CloseBtn']",
-            "span[class*='close' i]"
-        ]:
-            try:
-                close_btn = driver.find_elements(By.CSS_SELECTOR, sel)
-                for cb in close_btn:
-                    if cb.is_displayed():
-                        cb.click()
-                        log(f"Symbaloo: Closed adblock popup via {sel}")
-                        time.sleep(2)
-                        return True
-            except:
-                continue
-        try:
-            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
-            log("Symbaloo: Pressed Escape to close popup")
-            time.sleep(1)
-            return True
-        except: pass
-    except Exception as e:
-        log(f"Symbaloo: Adblock close error: {e}")
-    return False
+    return dismiss_overlays(driver)
 
 opts = Options()
-if sys.platform != "win32":
-    opts.add_argument('--headless=new')
+opts.add_argument('--headless=new')
 opts.add_argument('--no-sandbox')
 opts.add_argument('--disable-dev-shm-usage')
+opts.add_argument('--disable-gpu')
+opts.add_argument('--disable-software-rasterizer')
 opts.add_argument('--disable-blink-features=AutomationControlled')
+opts.add_argument('--remote-debugging-port=0')
+opts.add_argument('--disable-extensions')
+opts.add_argument('--disable-infobars')
+opts.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
 opts.add_experimental_option('excludeSwitches', ['enable-automation'])
 opts.add_experimental_option('useAutomationExtension', False)
-opts.add_argument(f'--user-data-dir={PROFILE_DIR}')
-opts.add_argument('--profile-directory=Default')
+try:
+    opts.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
+except: pass
+# Do NOT use persistent profile - stale sessions cause /login redirect issues
+# opts.add_argument(f'--user-data-dir={PROFILE_DIR}')
+# opts.add_argument('--profile-directory=Default')
 opts.add_argument('--window-size=1400,900')
+opts.page_load_strategy = 'eager'
 
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+log("Symbaloo: Initializing Chrome WebDriver...")
+driver = None
+try:
+    driver = webdriver.Chrome(options=opts)
+    log("Symbaloo: Chrome started via Selenium Manager.")
+except Exception as e1:
+    log(f"Symbaloo: Selenium Manager fallback ({e1}), trying ChromeDriverManager...")
+    try:
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+        log("Symbaloo: Chrome started via ChromeDriverManager.")
+    except Exception as e2:
+        result(False, error=f"Symbaloo: Chrome launch failed ({e2})")
+        sys.exit(1)
+
+driver.set_page_load_timeout(40)
+driver.set_script_timeout(30)
 driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
 try:
     log("Symbaloo: Navigating to login page...")
-    driver.get("https://www.symbaloo.com/login")
+    try:
+        driver.get("https://www.symbaloo.com/login")
+    except Exception as te:
+        log(f"Symbaloo: Login get note ({te}), continuing...")
     time.sleep(5)
 
-    # Accept GDPR if visible
-    close_consent_modal(driver)
+    dismiss_overlays(driver)
 
-    # Check if we are still on login page
-    if "login" in driver.current_url.lower():
-        log("Symbaloo: Logging in...")
-        try:
-            WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='email'], input[name='email'], #email")))
-        except: pass
-        
-        for sel in ["input[type='email']","input[name='email']","#email"]:
-            try:
-                el = driver.find_element(By.CSS_SELECTOR, sel)
-                el.click(); el.clear(); el.send_keys(email); break
-            except: continue
-        for sel in ["input[type='password']","#password"]:
-            try:
-                el = WebDriverWait(driver,6).until(EC.element_to_be_clickable((By.CSS_SELECTOR,sel)))
-                el.click(); el.clear(); el.send_keys(password); break
-            except: continue
-        for sel in ["button[type='submit']","#login-button"]:
-            try:
-                btn = WebDriverWait(driver,6).until(EC.element_to_be_clickable((By.CSS_SELECTOR,sel)))
-                driver.execute_script("arguments[0].click();",btn); break
-            except: continue
-        time.sleep(10)
+    # Always try to find login form (regardless of URL - Symbaloo may redirect)
+    already_logged_in = any(x in driver.current_url.lower() for x in ["/home/mix", "/mix/"])
+    if already_logged_in:
+        log(f"Symbaloo: Already logged in! URL = {driver.current_url}")
     else:
-        log("Symbaloo: Already logged in!")
+        log("Symbaloo: Waiting for login form fields...")
+        email_input = None
+        for attempt in range(25):
+            dismiss_overlays(driver)
+            # Try to force mount Elm app if DOMContentLoaded fired prematurely
+            try:
+                driver.execute_script("""
+                    try {
+                        var ph = document.getElementById('elmPagePlaceholder');
+                        if (ph && ph.children.length === 0) {
+                            if (window.Elm && window.Elm.Pages && window.Elm.Pages.Login && window.Elm.Pages.Login.Page) {
+                                window.Elm.Pages.Login.Page.init({
+                                    node: ph,
+                                    flags: { url: document.location.href, email: null, error: null }
+                                });
+                            } else {
+                                document.dispatchEvent(new Event('DOMContentLoaded'));
+                                document.dispatchEvent(new Event('readystatechange'));
+                            }
+                        }
+                        // Also try dispatching load event to help deferred scripts
+                        window.dispatchEvent(new Event('load'));
+                    } catch(e) {}
+                """)
+            except: pass
 
-    # Now go to the target mix URL (defaults to user's home page if custom_mix_url is not provided)
-    target_mix = custom_mix_url if (custom_mix_url and "symbaloo.com" in custom_mix_url) else "https://www.symbaloo.com/"
-    log(f"Symbaloo: Navigating to mix = {target_mix}")
-    driver.get(target_mix)
-    time.sleep(10)
-    close_consent_modal(driver)
-    close_adblock_modal(driver)
-    log(f"Symbaloo: URL = {driver.current_url}")
+            for sel in [
+                "#loginDialogEmailInput",
+                "input[id*='emailInput']",
+                "input[type='email']",
+                "input[name='email']",
+                "#email",
+                "input[placeholder*='email' i]",
+                "input[placeholder*='E-mail' i]",
+                "input[type='text']"
+            ]:
+                try:
+                    inp = driver.find_element(By.CSS_SELECTOR, sel)
+                    if inp.is_displayed():
+                        email_input = inp
+                        log(f"Symbaloo: Found email input [{sel}] on attempt {attempt+1}")
+                        break
+                except: pass
+            if email_input:
+                break
+            time.sleep(1)
 
-    log(f"Symbaloo: Mix loaded = {driver.current_url}")
+        # Fallback: if /login did not render inputs, try navigating to /login again with page_load_strategy=eager
+        if not email_input:
+            log("Symbaloo: Retrying /login directly one more time...")
+            try:
+                driver.get("https://www.symbaloo.com/login")
+                time.sleep(5)
+                dismiss_overlays(driver)
+                for sel in ["#loginDialogEmailInput", "input[id*='emailInput']", "input[type='email']", "input[name='email']", "#email", "input[placeholder*='email' i]", "input[type='text']"]:
+                    try:
+                        inp = driver.find_element(By.CSS_SELECTOR, sel)
+                        if inp.is_displayed():
+                            email_input = inp
+                            log(f"Symbaloo: Found email input on 2nd /login attempt [{sel}]")
+                            break
+                    except: pass
+            except Exception as e_retry:
+                log(f"Symbaloo: Retry /login note: {e_retry}")
+
+        if not email_input:
+            driver.save_screenshot(os.path.join(SCRIPT_DIR, 'symbaloo_error.png'))
+            try:
+                with open(os.path.join(SCRIPT_DIR, 'symbaloo_page_dump.html'), 'w', encoding='utf-8') as f:
+                    f.write(driver.page_source)
+                logs = driver.get_log('browser')
+                with open(os.path.join(SCRIPT_DIR, 'symbaloo_console.json'), 'w', encoding='utf-8') as f:
+                    f.write(json.dumps(logs))
+            except: pass
+            result(False, error="Symbaloo: Email input not found on login page (Page load or consent issue)")
+            sys.exit(0)
+
+        # Type email
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", email_input)
+        email_input.click()
+        email_input.clear()
+        email_input.send_keys(email)
+        log("Symbaloo: Email entered")
+        time.sleep(0.5)
+
+        # Type password
+        pass_input = None
+        for sel in ["#loginDialogPasswordInput", "input[id*='passwordInput']", "input[type='password']", "input[name='password']", "#password"]:
+            try:
+                inp = driver.find_element(By.CSS_SELECTOR, sel)
+                if inp.is_displayed():
+                    pass_input = inp
+                    break
+            except: pass
+
+        if not pass_input:
+            driver.save_screenshot(os.path.join(SCRIPT_DIR, 'symbaloo_error.png'))
+            result(False, error="Symbaloo: Password input not found on login page")
+            sys.exit(0)
+
+        pass_input.click()
+        pass_input.clear()
+        pass_input.send_keys(password)
+        log("Symbaloo: Password entered")
+        time.sleep(0.5)
+
+        # Submit form
+        submitted = False
+        for sel in ["button[type='submit']", "button.login-button", "#login-button", "//button[contains(., 'Log in') or contains(., 'Sign in') or contains(., 'Inloggen')]"]:
+            try:
+                btn = driver.find_element(By.XPATH if sel.startswith('/') else By.CSS_SELECTOR, sel)
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    submitted = True
+                    log(f"Symbaloo: Clicked submit button via {sel}")
+                    break
+            except: continue
+
+        if not submitted:
+            pass_input.send_keys(Keys.ENTER)
+            log("Symbaloo: Pressed Enter to submit login form")
+
+        # Wait up to 15 seconds for login redirect
+        log("Symbaloo: Waiting for login session redirect...")
+        logged_in = False
+        for _ in range(15):
+            time.sleep(1)
+            dismiss_overlays(driver)
+            curr = driver.current_url.lower()
+            if "login" not in curr:
+                logged_in = True
+                log(f"Symbaloo: Successfully logged in! Redirected to: {driver.current_url}")
+                break
+            # Check for bad credentials error
+            try:
+                b_text = driver.find_element(By.TAG_NAME, 'body').text.lower()
+                if "invalid email or password" in b_text or "incorrect password" in b_text or "invalid credentials" in b_text:
+                    driver.save_screenshot(os.path.join(SCRIPT_DIR, 'symbaloo_error.png'))
+                    result(False, error="Symbaloo: Invalid email or password.")
+                    sys.exit(0)
+            except: pass
+
+        if not logged_in:
+            log("Symbaloo: Still on login URL after 15s, attempting to continue...")
+
+    # Handle Webmix navigation
+    dismiss_overlays(driver)
+    if custom_mix_url and "symbaloo.com" in custom_mix_url:
+        log(f"Symbaloo: Navigating to custom target mix = {custom_mix_url}")
+        try:
+            driver.get(custom_mix_url)
+        except Exception as te:
+            log(f"Symbaloo: Mix page get note ({te}), continuing...")
+        time.sleep(5)
+        dismiss_overlays(driver)
+    else:
+        # If user landed on home/mix or root, check if we need to load home webmix
+        curr = driver.current_url.lower()
+        if "symbaloo.com/home" not in curr and "symbaloo.com/mix" not in curr:
+            log("Symbaloo: Navigating to default user home mix...")
+            try:
+                driver.get("https://www.symbaloo.com/home")
+            except: pass
+            time.sleep(5)
+            dismiss_overlays(driver)
+
+    log(f"Symbaloo: Webmix URL = {driver.current_url}")
+    dismiss_overlays(driver)
+
+    # Check if webmix is read-only public mix and needs to be added to user account
+    try:
+        for btn in driver.find_elements(By.TAG_NAME, 'button'):
+            btxt = btn.text.strip().lower()
+            if 'add this webmix' in btxt or 'add webmix' in btxt or 'copy webmix' in btxt:
+                driver.execute_script("arguments[0].click();", btn)
+                log("Symbaloo: Clicked 'Add this Webmix' to make it editable")
+                time.sleep(3)
+                dismiss_overlays(driver)
+                break
+    except Exception as ce:
+        log(f"Symbaloo: Copy webmix note: {ce}")
 
     # Check if we need to enter Edit mode
     try:
@@ -195,8 +376,9 @@ try:
             if 'Edit Webmix' in txt or 'Edit webmix' in txt:
                 driver.execute_script("arguments[0].click();", btn)
                 log("Symbaloo: Clicked 'Edit Webmix' to enter edit mode")
-                time.sleep(4)
+                time.sleep(3)
                 edit_clicked = True
+                dismiss_overlays(driver)
                 break
         if not edit_clicked:
             for el in driver.find_elements(By.XPATH, "//*[contains(text(), 'Edit Webmix') or contains(text(), 'Edit webmix')]"):
@@ -204,56 +386,61 @@ try:
                     if el.is_displayed():
                         driver.execute_script("arguments[0].click();", el)
                         log("Symbaloo: Clicked 'Edit Webmix' element to enter edit mode")
-                        time.sleep(4)
+                        time.sleep(3)
+                        dismiss_overlays(driver)
                         break
                 except: continue
     except Exception as e:
         log(f"Symbaloo: Edit mode click error: {e}")
 
+    dismiss_overlays(driver)
+
     # Find empty cells
-    cells = driver.find_elements(By.CSS_SELECTOR, "[id^='gridEmptyCell']")
+    cells = driver.find_elements(By.CSS_SELECTOR, "[id^='gridEmptyCell'], div[class*='emptyCell'], div[class*='empty-cell'], [data-test-id*='empty-cell']")
     log(f"Symbaloo: Empty cells = {len(cells)}")
 
     if not cells:
-        result(False, error="Symbaloo: No empty cells in this mix")
-        exit()
+        driver.save_screenshot(os.path.join(SCRIPT_DIR, 'symbaloo_error.png'))
+        result(False, error="Symbaloo: No empty cells in this mix (Webmix is full)")
+        sys.exit(0)
 
-    # Try up to 5 empty cells to open the tile addition sidebar
+    # Try up to 6 empty cells to open the tile addition sidebar
     tile_input = None
-    max_cells_to_try = min(len(cells), 5)
+    max_cells_to_try = min(len(cells), 6)
 
     for idx in range(max_cells_to_try):
         cell = cells[idx]
         log(f"Symbaloo: Trying empty cell #{idx+1}...")
+        dismiss_overlays(driver)
+
         try:
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", cell)
-            time.sleep(0.5)
+            time.sleep(0.3)
         except: continue
 
-        # 1. Single click via JS
+        # 1. ActionChains native double click
         try:
-            driver.execute_script("arguments[0].click();", cell)
-            time.sleep(0.5)
+            ActionChains(driver).move_to_element(cell).double_click().perform()
+            time.sleep(1)
         except: pass
 
-        # 2. Double click via JS
+        # 2. JS double click event
         try:
             driver.execute_script("""
                 var target = arguments[0];
-                var clickEvent = document.createEvent('MouseEvents');
-                clickEvent.initEvent('dblclick', true, true);
+                var clickEvent = new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window });
                 target.dispatchEvent(clickEvent);
             """, cell)
             time.sleep(1)
         except: pass
 
-        # 3. Native selenium click
+        # 3. Single click via JS
         try:
-            cell.click()
-            time.sleep(2)
+            driver.execute_script("arguments[0].click();", cell)
+            time.sleep(1)
         except: pass
 
-        close_adblock_modal(driver)
+        dismiss_overlays(driver)
 
         # Check if tileSearchInput is visible
         for sel in [
@@ -262,13 +449,19 @@ try:
             "input[placeholder*='url' i]",
             "input[placeholder*='search query' i]",
             "input[placeholder*='Enter a URL' i]",
+            "input[placeholder*='search' i]",
+            "input[type='url']",
+            "input[name='url']",
+            ".sidebar input[type='text']"
         ]:
             try:
-                el = driver.find_element(By.CSS_SELECTOR, sel)
-                if el.is_displayed():
-                    tile_input = el
-                    log(f"Symbaloo: Found tileSearchInput [{sel}] on cell #{idx+1}!")
-                    break
+                els = driver.find_elements(By.CSS_SELECTOR, sel)
+                for el in els:
+                    if el.is_displayed():
+                        tile_input = el
+                        log(f"Symbaloo: Found tile input [{sel}] on cell #{idx+1}!")
+                        break
+                if tile_input: break
             except: continue
 
         if tile_input:
@@ -277,7 +470,7 @@ try:
     if not tile_input:
         driver.save_screenshot(os.path.join(SCRIPT_DIR, 'symbaloo_error.png'))
         result(False, error="Symbaloo: tileSearchInput not found after trying multiple empty cells")
-        exit()
+        sys.exit(0)
 
     # Type target URL
     try:

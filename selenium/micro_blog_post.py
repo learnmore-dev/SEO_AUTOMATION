@@ -293,6 +293,62 @@ def post_scoopit(email, password, keyword, target_site, ai_title="", ai_content=
         try: driver.quit()
         except: pass
 
+def wakelet_public_url(driver):
+    cur = (driver.current_url or "").split("?")[0]
+    if "/wake/" in cur and "workspace" not in cur:
+        return cur
+    if "wke.lt" in cur:
+        return cur
+    for css in ["a[href*='/wake/']", "a[href*='wke.lt']", "input[value*='/wake/']", "input[value*='wke.lt']"]:
+        try:
+            for el in driver.find_elements(By.CSS_SELECTOR, css):
+                href = (el.get_attribute("href") or el.get_attribute("value") or "").split("?")[0]
+                if "/wake/" in href or "wke.lt" in href:
+                    return href
+        except Exception:
+            continue
+    src = driver.page_source or ""
+    m = re.search(r"https://(?:www\.)?wakelet\.com/wake/[A-Za-z0-9_-]+", src)
+    if m:
+        return m.group(0)
+    m = re.search(r"https://wke\.lt/w/s/[A-Za-z0-9_-]+", src)
+    if m:
+        return m.group(0)
+    return ""
+
+
+def wakelet_try_share(driver, wait):
+    for sel in [
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'share')]",
+        "//button[@aria-label='Share']",
+        "[data-testid*='share' i]",
+        "button[class*='share']",
+    ]:
+        try:
+            by = By.XPATH if sel.startswith("//") else By.CSS_SELECTOR
+            btn = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((by, sel)))
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                time.sleep(2)
+                break
+        except Exception:
+            continue
+    for sel in [
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'can view')]",
+        "//span[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'can view')]/ancestor::button",
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'publish')]",
+        "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'copy link')]",
+    ]:
+        try:
+            btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((By.XPATH, sel)))
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                time.sleep(1)
+        except Exception:
+            continue
+    return wakelet_public_url(driver)
+
+
 def post_wakelet(email, password, keyword, target_site, ai_title="", ai_content=""):
     """
     Wakelet auto-post using saved Chrome profile:
@@ -327,10 +383,12 @@ def post_wakelet(email, password, keyword, target_site, ai_title="", ai_content=
         time.sleep(5)
         log("Wakelet: URL = " + driver.current_url)
 
-        # Check login
+        # Check login — workspace URL alone is not proof of a collection
         src = driver.page_source.lower()
-        logged = ("logout" in src or "workspace" in driver.current_url or
-                  "collections" in driver.current_url)
+        logged = any(tok in src for tok in ("create collection", "sign out", "log out", "collections created")) or (
+            "workspace" in (driver.current_url or "") and "login" not in (driver.current_url or "").lower()
+            and "sign-in" not in (driver.current_url or "").lower()
+        )
 
         if not logged:
             log("Wakelet: Not logged in - attempting login...")
@@ -372,25 +430,32 @@ def post_wakelet(email, password, keyword, target_site, ai_title="", ai_content=
         else:
             log("Wakelet: Already logged in!")
 
-        # ── Step 1: Click "Create Collection" (primary button) ───
+        try:
+            driver.get("https://wakelet.com/home")
+            time.sleep(4)
+        except Exception:
+            pass
         log("Wakelet: Clicking Create Collection...")
+        created = False
         for sel in [
-            "button[class*='primary']",
-            "//button[contains(text(),'Create Collection')]",
-            "//button[contains(text(),'Create')]",
+            "//button[contains(.,'Create Collection')]",
+            "//a[contains(.,'Create Collection')]",
+            "//button[contains(.,'plus button')]",
+            "//button[contains(.,'+') and contains(.,'Create')]",
         ]:
             try:
-                by = By.XPATH if sel.startswith('//') else By.CSS_SELECTOR
-                btns_list = driver.find_elements(by, sel) if by == By.CSS_SELECTOR else [driver.find_element(by, sel)]
-                for b in (btns_list if isinstance(btns_list, list) else [btns_list]):
-                    if b.is_displayed() and ('create' in b.text.lower() or 'create' in (b.get_attribute('class') or '').lower()):
-                        _AC(driver).move_to_element(b).click().perform()
-                        log("Wakelet: Clicked - " + b.text.strip())
-                        time.sleep(4)
-                        break
-                else: continue
-                break
-            except: continue
+                btn = WebDriverWait(driver, 8).until(EC.element_to_be_clickable((By.XPATH, sel)))
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    log("Wakelet: Clicked Create Collection")
+                    created = True
+                    time.sleep(4)
+                    break
+            except Exception:
+                continue
+        if not created:
+            result(False, error="Wakelet: Create Collection button nahi mila. Page refresh karke Auto Post dubara chalao.")
+            return
 
         # ── Step 2: Click "Blank Collection" ────────────────────
         log("Wakelet: Clicking Blank Collection...")
@@ -410,9 +475,11 @@ def post_wakelet(email, password, keyword, target_site, ai_title="", ai_content=
             except: continue
 
         # ── Step 3: Paste URL in "Paste any web address" input ──
-        wake_url = driver.current_url  # collection URL like /wake/XXXXX
-        log("Wakelet: Collection URL = " + wake_url)
         log("Wakelet: Adding link: " + target_site)
+        for _ in range(8):
+            if "/wake/" in (driver.current_url or "") and "workspace" not in (driver.current_url or ""):
+                break
+            time.sleep(1)
 
         for url_sel in [
             "input[placeholder*='web address' i]",
@@ -433,44 +500,29 @@ def post_wakelet(email, password, keyword, target_site, ai_title="", ai_content=
                     url_inp.send_keys(_K.RETURN)
                     time.sleep(6)
                     log("Wakelet: URL submitted, page = " + driver.current_url)
-                    # Update wake_url if URL changed to actual wake page
-                    if "wake" in driver.current_url and "workspace" not in driver.current_url:
-                        wake_url = driver.current_url
                     break
             except: continue
 
-        # If URL still workspace, try getting wake URL from page
-        if "workspace" in wake_url or "home" in wake_url:
+        wake_url = wakelet_public_url(driver)
+        if not wake_url:
+            wake_url = wakelet_try_share(driver, wait)
+        if not wake_url:
             try:
-                # Check for links to /wake/ on current page
-                links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/wake/']")
+                links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/wake/'], a[href*='wke.lt']")
                 for l in links:
                     href = l.get_attribute('href') or ''
-                    if '/wake/' in href and 'wakelet.com' in href:
-                        wake_url = href
+                    if '/wake/' in href or 'wke.lt' in href:
+                        wake_url = href.split('?')[0]
                         log("Wakelet: Wake URL from page = " + wake_url)
                         break
-            except: pass
+            except Exception:
+                pass
 
-            if "workspace" in wake_url:
-                # Navigate to collections to find most recent wake
-                try:
-                    workspace_id = [p for p in driver.current_url.split('/') if p and p != 'workspace' and 'wakelet' not in p][0] if 'workspace' in driver.current_url else ""
-                    if workspace_id:
-                        driver.get(f"https://wakelet.com/workspace/{workspace_id}/collections")
-                        time.sleep(4)
-                        # Get first wake link (most recent = first)
-                        recent = driver.find_elements(By.CSS_SELECTOR, "a[href*='/wake/']")
-                        if recent:
-                            wake_url = recent[0].get_attribute('href') or wake_url
-                            log("Wakelet: Most recent wake = " + wake_url)
-                except: pass
-
-        # ── Step 4: Done ─────────────────────────────────────────
-        final = driver.current_url
-        log("Wakelet: Final URL = " + final)
-        final_url = wake_url if "wakelet.com" in wake_url else final
-        result(True, url=final_url)
+        log("Wakelet: Public URL = " + (wake_url or driver.current_url))
+        if not wake_url or "workspace" in wake_url or "/collections" in wake_url:
+            result(False, error="Wakelet collection editor open hai, lekin public /wake/ link nahi mila. Wakelet mein collection kholo → Share → Can View → Copy link.")
+            return
+        result(True, url=wake_url)
 
     except Exception as e:
         result(False, error=str(e))
@@ -635,57 +687,186 @@ def post_pearltrees(email, password, keyword, target_site, ai_title="", ai_conte
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # MEWE
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def mewe_is_logged_in(driver):
+    url = (driver.current_url or "").lower()
+    if any(part in url for part in ("/newsfeed", "/myworld", "/my-world", "/groups", "/chats")):
+        return True
+    src = (driver.page_source or "").lower()
+    if "log in" in src and "/login" in url:
+        return False
+    return any(token in src for token in ("log out", "logout", "newsfeed", "my world"))
+
+
+def mewe_has_captcha(driver):
+    src = (driver.page_source or "").lower()
+    url = (driver.current_url or "").lower()
+    needles = ("recaptcha", "hcaptcha", "captcha", "cf-challenge", "challenge-platform", "i am not a robot")
+    return any(n in src or n in url for n in needles)
+
+
+def mewe_wait_until_logged_in(driver, seconds=180):
+    log("MeWe: Captcha/challenge detected. Chrome window mein captcha complete karo — 3 minute wait.")
+    end = time.time() + seconds
+    while time.time() < end:
+        time.sleep(4)
+        try:
+            if mewe_is_logged_in(driver):
+                log("MeWe: Login confirmed after captcha.")
+                return True
+            if "login" not in (driver.current_url or "").lower() and "mewe.com" in (driver.current_url or "").lower():
+                if mewe_is_logged_in(driver):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def mewe_inject_session(driver, email):
+    path = os.path.join(script_dir, 'sessions', 'mewe_inject.txt')
+    if not os.path.isfile(path):
+        return False
+    try:
+        raw = open(path, 'r', encoding='utf-8').read().strip()
+    except Exception:
+        return False
+    if not raw:
+        return False
+    try:
+        driver.get("https://mewe.com/favicon.ico")
+        time.sleep(1)
+        if '=' in raw:
+            for part in raw.split(';'):
+                part = part.strip()
+                if '=' not in part:
+                    continue
+                name, value = part.split('=', 1)
+                try:
+                    driver.add_cookie({'name': name.strip(), 'value': value.strip(), 'domain': '.mewe.com', 'path': '/'})
+                except Exception:
+                    continue
+        else:
+            try:
+                driver.add_cookie({'name': 'session', 'value': raw, 'domain': '.mewe.com', 'path': '/'})
+            except Exception:
+                pass
+            try:
+                driver.execute_script(
+                    "localStorage.setItem('token', arguments[0]); localStorage.setItem('accessToken', arguments[0]);",
+                    raw
+                )
+            except Exception:
+                pass
+        driver.get("https://mewe.com/")
+        time.sleep(4)
+        return mewe_is_logged_in(driver)
+    except Exception as e:
+        log(f"MeWe: Session inject failed: {e}")
+        return False
+
+
 def post_mewe(email, password, keyword, target_site, ai_title="", ai_content=""):
-    driver = get_driver('mewe')
+    driver = get_driver_with_profile('mewe', email)
     wait   = WebDriverWait(driver, 20)
     try:
-        log("MeWe: Logging in...")
-        driver.get("https://mewe.com/login")
-        time.sleep(5)
+        log("MeWe: Opening saved Chrome session...")
+        inject_file = os.path.join(script_dir, 'sessions', 'mewe_inject.txt')
+        had_session = os.path.isfile(inject_file) and os.path.getsize(inject_file) > 8
+        if mewe_inject_session(driver, email):
+            log("MeWe: Logged in with saved session token — captcha skip.")
+        else:
+            driver.get("https://mewe.com/")
+            time.sleep(5)
+            if had_session and not mewe_is_logged_in(driver):
+                result(False, error="MeWe session Cookie expired. Paste a fresh Cookie from mewe.com Network (mewe.com/api, not Mixpanel) into API Key.")
+                return
+        if mewe_is_logged_in(driver):
+            log("MeWe: Already logged in — captcha skip.")
+        else:
+            log("MeWe: Logging in...")
+            driver.get("https://mewe.com/login")
+            time.sleep(6)
 
-        # Click "Use email or phone" button first
-        for sel in [
-            "//button[contains(text(),'Use email')]",
-            "//button[contains(text(),'email or phone')]",
-            "button.btn-l",
-        ]:
-            try:
-                by = By.XPATH if sel.startswith('//') else By.CSS_SELECTOR
-                btn = WebDriverWait(driver, 8).until(EC.element_to_be_clickable((by, sel)))
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
-                    time.sleep(3)
-                    log("MeWe: Clicked 'Use email' button")
+            for sel in [
+                "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use email')]",
+                "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'email or phone')]",
+                "//a[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use email')]",
+                "//span[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'use email')]/ancestor::button",
+            ]:
+                try:
+                    btn = WebDriverWait(driver, 6).until(EC.element_to_be_clickable((By.XPATH, sel)))
+                    if btn.is_displayed():
+                        driver.execute_script("arguments[0].click();", btn)
+                        time.sleep(2)
+                        log("MeWe: Clicked email login")
+                        break
+                except Exception:
+                    continue
+
+            typed_email = False
+            for sel in ["input[type='email']", "input[name='email']", "input[name='username']", "input[autocomplete='username']", "input[type='text']"]:
+                if js_type(driver, sel, email) or wait_type(driver, wait, sel, email, timeout=6):
+                    typed_email = True
+                    log("MeWe: Email typed")
                     break
-            except: continue
+            if not typed_email:
+                if mewe_has_captcha(driver) and mewe_wait_until_logged_in(driver):
+                    pass
+                else:
+                    try:
+                        driver.save_screenshot(os.path.join(script_dir, "mewe_debug.png"))
+                    except Exception:
+                        pass
+                    result(False, error="MeWe login form not found.")
+                    return
 
-        # Now find email/password fields
-        wait_type(driver, wait, "input[type='email'], input[name='email'], input[type='text']", email, timeout=10)
-        time.sleep(0.5)
+            if not mewe_is_logged_in(driver):
+                for sel in [
+                    "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'next')]",
+                    "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'continue')]",
+                    "button[type='submit']",
+                ]:
+                    try:
+                        by = By.XPATH if sel.startswith("//") else By.CSS_SELECTOR
+                        btn = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((by, sel)))
+                        if btn.is_displayed():
+                            driver.execute_script("arguments[0].click();", btn)
+                            time.sleep(2)
+                            break
+                    except Exception:
+                        continue
 
-        # Click Next/Continue if shown
-        for sel in ["//button[contains(text(),'Next') or contains(text(),'Continue')]", "button[type='submit']"]:
-            try:
-                by = By.XPATH if sel.startswith('//') else By.CSS_SELECTOR
-                btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((by, sel)))
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
-                    time.sleep(2)
-                    break
-            except: continue
+                typed_pass = js_type(driver, "input[type='password']", password) or wait_type(driver, wait, "input[type='password']", password, timeout=10)
+                if typed_pass:
+                    clicked_login = False
+                    for sel, by in [
+                        ("button[type='submit']", By.CSS_SELECTOR),
+                        ("//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'log in')]", By.XPATH),
+                        ("//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'sign in')]", By.XPATH),
+                    ]:
+                        if wait_click(driver, wait, sel, by, timeout=6):
+                            clicked_login = True
+                            break
+                    if not clicked_login:
+                        try:
+                            driver.find_element(By.CSS_SELECTOR, "input[type='password']").send_keys(Keys.ENTER)
+                        except Exception:
+                            pass
+                    time.sleep(5)
 
-        wait_type(driver, wait, "input[type='password']", password, timeout=10)
-        wait_click(driver, wait, "button[type='submit'], //button[contains(text(),'Log in')]", By.XPATH if '//' in "//button" else By.CSS_SELECTOR, timeout=10)
-        time.sleep(7)
-
-        if "login" in driver.current_url or "mewe.com" not in driver.current_url:
-            result(False, error="MeWe login failed. Check credentials.")
-            return
+            if not mewe_is_logged_in(driver):
+                if mewe_has_captcha(driver) or "login" in (driver.current_url or "").lower():
+                    if not mewe_wait_until_logged_in(driver):
+                        try:
+                            driver.save_screenshot(os.path.join(script_dir, "mewe_debug.png"))
+                        except Exception:
+                            pass
+                        result(False, error="MeWe captcha/login wait timed out. Chrome window mein captcha complete karke Auto Post dubara chalao.")
+                        return
 
         log("MeWe: Logged in!")
 
         # Navigate to newsfeed
-        driver.get("https://mewe.com/newsfeed")
+        driver.get("https://mewe.com/")
         time.sleep(5)
 
         # Click compose/post area
@@ -703,10 +884,14 @@ def post_mewe(email, password, keyword, target_site, ai_title="", ai_content="")
                 if el.is_displayed():
                     el.click()
                     time.sleep(1)
-                    content = (f"Best {keyword.title()} training course!\n\n"
-                               f"Expert trainers, hands-on projects, placement support.\n\n"
-                               f"Enroll: {target_site}\n\n"
-                               f"#{keyword.replace(' ','')} #Training #Education #Career")
+                    content = (ai_content or (
+                        f"Best {keyword.title()} training course!\n\n"
+                        f"Expert trainers, hands-on projects, placement support.\n\n"
+                        f"Enroll: {target_site}\n\n"
+                        f"#{keyword.replace(' ','')} #Training #Education #Career"
+                    ))
+                    if target_site not in content:
+                        content = content[:1400] + "\n" + target_site
                     el.send_keys(content[:1500])
                     log("MeWe: Content typed")
                     compose_clicked = True
@@ -733,7 +918,7 @@ def post_mewe(email, password, keyword, target_site, ai_title="", ai_content="")
                     break
             except: continue
 
-        result(True, url="https://mewe.com/newsfeed")
+        result(True, url="https://mewe.com/")
 
     except Exception as e:
         result(False, error=str(e))
@@ -1143,11 +1328,28 @@ def post_minds(email, password, keyword, target_site, ai_title="", ai_content=""
                 if btn.is_displayed() and btn.is_enabled():
                     driver.execute_script("arguments[0].click();", btn)
                     log("Minds: Post button clicked: " + btn.text.strip())
-                    time.sleep(6); break
+                    break
             except: continue
+        time.sleep(7)
+        clean_user = email.lstrip('@').strip()
+        final_url = f"https://www.minds.com/{clean_user}"
 
-        profile_url = f"https://www.minds.com/{email}"
-        result(True, url=profile_url)
+        # Fetch actual post permalink from channel feed
+        try:
+            driver.get(final_url)
+            time.sleep(5)
+            # Find links containing post permalinks on profile feed
+            links = driver.find_elements(By.XPATH, f"//a[contains(@href, '/post/') or contains(@href, '/newsfeed/')]")
+            for link in links:
+                href = link.get_attribute('href')
+                if href and ('/post/' in href or '/newsfeed/' in href) and 'subscriptions' not in href and 'login' not in href and 'boost' not in href:
+                    final_url = href
+                    log("Minds: Post permalink found: " + final_url)
+                    break
+        except Exception as pe:
+            log("Minds: Falling back to channel URL: " + str(pe))
+
+        result(True, url=final_url)
 
     except Exception as e:
         result(False, error=str(e))

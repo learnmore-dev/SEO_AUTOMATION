@@ -1,7 +1,11 @@
 <?php
+ob_start();
 require_once __DIR__ . '/../config.php';
 
-session_start();
+// Only start session if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 // Handle reset of keys
 if (isset($_GET['reset'])) {

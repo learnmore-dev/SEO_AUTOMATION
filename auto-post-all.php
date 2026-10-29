@@ -1,4 +1,5 @@
 <?php
+ob_start();
 /**
  * Auto-post to ALL platform accounts in parallel (curl_multi).
  * Supports single platform filter or all platforms.
@@ -17,6 +18,7 @@ $stmt->execute([$projectId, $userId]);
 $project = $stmt->fetch();
 
 if (!$project) {
+    if (ob_get_length()) ob_clean();
     header('Content-Type: application/json');
     echo json_encode(['error' => 'Project not found']);
     exit;
@@ -31,23 +33,29 @@ if (!empty($platformsFilterStr)) {
     $platformsList = array_filter(array_map('trim', explode(',', $platformsFilterStr)));
     if (!empty($platformsList)) {
         $inClause = implode(',', array_fill(0, count($platformsList), '?'));
-        $params = array_merge([$projectId], $platformsList);
-        $accountsStmt = $db->prepare("SELECT * FROM social_accounts WHERE project_id=? AND platform IN ($inClause) AND status='active' ORDER BY platform, id");
+        $params = array_merge([$projectId, $userId], $platformsList);
+        $accountsStmt = $db->prepare("SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=? AND platform IN ($inClause) AND status='active' ORDER BY platform, id");
         $accountsStmt->execute($params);
     } else {
-        $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE project_id=? AND status="active" ORDER BY platform, id');
-        $accountsStmt->execute([$projectId]);
+        $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=? AND status="active" ORDER BY platform, id');
+        $accountsStmt->execute([$projectId, $userId]);
     }
 } elseif (!empty($platformFilter)) {
-    $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE project_id=? AND platform=? AND status="active" ORDER BY id');
-    $accountsStmt->execute([$projectId, $platformFilter]);
+    if (!empty($_GET['account_id'])) {
+        $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=? AND platform=? AND id=? AND status="active"');
+        $accountsStmt->execute([$projectId, $userId, $platformFilter, (int)$_GET['account_id']]);
+    } else {
+        $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=? AND platform=? AND status="active" ORDER BY id');
+        $accountsStmt->execute([$projectId, $userId, $platformFilter]);
+    }
 } else {
-    $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE project_id=? AND status="active" ORDER BY platform, id');
-    $accountsStmt->execute([$projectId]);
+    $accountsStmt = $db->prepare('SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=? AND status="active" ORDER BY platform, id');
+    $accountsStmt->execute([$projectId, $userId]);
 }
 $accounts = $accountsStmt->fetchAll();
 
 if (empty($accounts)) {
+    if (ob_get_length()) ob_clean();
     header('Content-Type: application/json');
     echo json_encode(['error' => 'No credentials saved.', 'results' => []]);
     exit;
@@ -105,6 +113,18 @@ foreach ($accounts as $creds) {
     $queued++;
 }
 
+if ($queued > 0) {
+    if (DIRECTORY_SEPARATOR === '\\') {
+        $iniPath = __DIR__ . '/php.ini';
+        @pclose(@popen("start /B php -c " . escapeshellarg($iniPath) . " " . escapeshellarg(__DIR__ . '/cron_worker.php') . " > NUL 2>&1", "r"));
+    } else {
+        @exec("php " . escapeshellarg(__DIR__ . '/cron_worker.php') . " > /dev/null 2>&1 &");
+    }
+}
+
+if (ob_get_length()) {
+    ob_clean();
+}
 header('Content-Type: application/json');
 echo json_encode([
     'message' => "Done: Queued {$queued} posting tasks in the background.",

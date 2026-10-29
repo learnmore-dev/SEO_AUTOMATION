@@ -9,6 +9,7 @@ selenium/*/chrome_profile*/
 selenium/*/Default/
 selenium/tmp_dir*/
 selenium/tmp_dir_*
+selenium/sessions/
 scratch/
 
 # Config with sensitive data

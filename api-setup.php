@@ -98,6 +98,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['test_ai_key'])) {
             echo json_encode(['success' => false, 'error' => '❌ Gemini Error: ' . $msg]);
         }
         exit;
+    } elseif ($provider === 'groq') {
+        $isXai = (strpos($key, 'xai-') === 0);
+        $endpoint = $isXai ? 'https://api.x.ai/v1/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+        $candidateModels = $isXai
+            ? ['grok-beta', 'grok-2']
+            : ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+
+        $workingModel = null;
+        $lastError = '';
+
+        foreach ($candidateModels as $tryModel) {
+            $ch = curl_init($endpoint);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => json_encode([
+                    'model' => $tryModel,
+                    'messages' => [['role' => 'user', 'content' => 'Say test ok']],
+                    'max_tokens' => 5
+                ]),
+                CURLOPT_HTTPHEADER => [
+                    'Authorization: Bearer ' . $key,
+                    'Content-Type: application/json'
+                ],
+                CURLOPT_TIMEOUT => 15,
+                CURLOPT_SSL_VERIFYPEER => false
+            ]);
+            $res = curl_exec($ch);
+            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $json = json_decode($res, true);
+
+            if ($code === 200) {
+                $workingModel = $tryModel;
+                break;
+            } else {
+                $lastError = $json['error']['message'] ?? (is_string($json['error'] ?? null) ? $json['error'] : "HTTP $code Error");
+            }
+        }
+
+        if ($workingModel) {
+            $label = $isXai ? 'xAI Grok' : 'Groq';
+            echo json_encode(['success' => true, 'message' => "✅ {$label} API Key is VALID! (Model: {$workingModel})"]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '❌ Groq/Grok Error: ' . $lastError]);
+        }
+        exit;
     }
 }
 
@@ -107,6 +154,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_keys'])) {
     } else {
         $keys = [
             'PRIMARY_AI_PROVIDER'  => trim($_POST['primary_ai_provider'] ?? 'auto'),
+            'GROQ_API_KEY'         => trim($_POST['groq'] ?? ''),
+            'GROQ_MODEL'           => trim($_POST['groq_model'] ?? 'qwen/qwen3.8-27b'),
             'OPENAI_API_KEY'       => trim($_POST['openai'] ?? ''),
             'OPENAI_MODEL'         => trim($_POST['openai_model'] ?? 'gpt-4o-mini'),
             'OPENAI_IMAGE_API_KEY' => trim($_POST['openai_image'] ?? ''),
@@ -178,6 +227,9 @@ function maskKey($v) {
           <h6 class="text-success">✅ Required (At least one AI Key)</h6>
           <p class="small mb-0"><strong>ChatGPT (OpenAI)</strong> or <strong>Gemini (Google)</strong> — Content, articles, meta tags, social posts.</p>
           <div class="mt-2">
+            <span class="badge <?= hasGroq() ? 'bg-success' : 'bg-secondary' ?> me-1">
+              Groq: <?= hasGroq() ? 'Configured' : 'Optional' ?>
+            </span>
             <span class="badge <?= hasChatGPT() ? 'bg-success' : 'bg-danger' ?> me-1">
               OpenAI: <?= hasChatGPT() ? 'Configured' : 'Missing' ?>
             </span>
@@ -219,13 +271,39 @@ function maskKey($v) {
         <label class="form-label fw-bold text-primary fs-6 mb-1"><i class="fas fa-brain me-1"></i>Primary AI Content Provider</label>
         <?php $currentProvider = $local['PRIMARY_AI_PROVIDER'] ?? (defined('PRIMARY_AI_PROVIDER') ? PRIMARY_AI_PROVIDER : 'auto'); ?>
         <select name="primary_ai_provider" class="form-select font-monospace fw-bold border-primary">
-          <option value="auto" <?= $currentProvider === 'auto' ? 'selected' : '' ?>>🔄 Auto Fallback (Try DeepSeek → Gemini → ChatGPT)</option>
-          <option value="deepseek" <?= $currentProvider === 'deepseek' ? 'selected' : '' ?>>🐋 DeepSeek AI (Super Cheap & Natural - Recommended)</option>
+          <option value="groq" <?= $currentProvider === 'groq' ? 'selected' : '' ?>>⚡ Groq / Grok (Ultra-Fast LPU & Free Tier - Recommended)</option>
+          <option value="auto" <?= $currentProvider === 'auto' ? 'selected' : '' ?>>🔄 Auto Fallback (Try Groq → DeepSeek → Gemini → ChatGPT)</option>
+          <option value="deepseek" <?= $currentProvider === 'deepseek' ? 'selected' : '' ?>>🐋 DeepSeek AI (Super Cheap & Natural)</option>
           <option value="openai" <?= $currentProvider === 'openai' ? 'selected' : '' ?>>🤖 ChatGPT (OpenAI)</option>
           <option value="gemini" <?= $currentProvider === 'gemini' ? 'selected' : '' ?>>⚡ Google Gemini (100% Free)</option>
         </select>
         <div class="form-text mt-1">
           Choose which AI engine to use for generating blog posts, titles, and social auto-poster content.
+        </div>
+      </div>
+
+      <div class="mb-3 p-3 bg-white border border-success rounded shadow-sm">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <label class="form-label fw-bold mb-0 text-success"><i class="fas fa-bolt me-1"></i>Groq / Grok API Key <span class="badge bg-success">Super Fast</span></label>
+          <button type="button" class="btn btn-outline-success btn-sm" onclick="testKey('groq')">
+            <i class="fas fa-plug me-1"></i>Test Groq Key
+          </button>
+        </div>
+        <input type="text" id="input_groq" name="groq" class="form-control font-monospace mb-2" placeholder="gsk_... or xai-..."
+               value="<?= clean($local['GROQ_API_KEY'] ?? (defined('GROQ_API_KEY') ? GROQ_API_KEY : '')) ?>">
+        <?php $currentGroqModel = $local['GROQ_MODEL'] ?? (defined('GROQ_MODEL') ? GROQ_MODEL : 'qwen/qwen3.8-27b'); ?>
+        <div class="mt-2 mb-2">
+          <label class="form-label fw-bold mb-1 small text-dark"><i class="fas fa-microchip me-1"></i>Groq AI Model</label>
+          <select name="groq_model" class="form-select font-monospace">
+            <option value="qwen/qwen3.8-27b" <?= $currentGroqModel === 'qwen/qwen3.8-27b' ? 'selected' : '' ?>>qwen/qwen3.8-27b (Recommended - Ultra Fast & High Quality)</option>
+            <option value="openai/gpt-oss-120b" <?= $currentGroqModel === 'openai/gpt-oss-120b' ? 'selected' : '' ?>>openai/gpt-oss-120b (Most Powerful - Best Quality)</option>
+            <option value="openai/gpt-oss-20b" <?= $currentGroqModel === 'openai/gpt-oss-20b' ? 'selected' : '' ?>>openai/gpt-oss-20b (Lightweight & Fast)</option>
+            <option value="llama-3.3-70b-versatile" <?= $currentGroqModel === 'llama-3.3-70b-versatile' ? 'selected' : '' ?>>llama-3.3-70b-versatile (Meta Llama 3.3)</option>
+          </select>
+        </div>
+        <div id="status_groq" class="mt-1 small"></div>
+        <div class="form-text">
+          Supports <strong>Groq Cloud</strong> (<code>gsk_...</code> from <a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a>) and <strong>xAI Grok</strong> (<code>xai-...</code> from <a href="https://console.x.ai" target="_blank">console.x.ai</a>).
         </div>
       </div>
 

@@ -39,6 +39,19 @@ if ($projectId > 0) {
         $savedMeta = $db->prepare("SELECT * FROM project_meta WHERE project_id=?");
         $savedMeta->execute([$projectId]);
         $savedMeta = $savedMeta->fetch();
+
+        $dummyUser = strcasecmp(trim((string)($project['github_user'] ?? '')), 'kartik') === 0;
+        $dummyToken = (string)($project['github_token'] ?? '') === '12345678';
+        if ($dummyUser || $dummyToken) {
+            if ($dummyUser) {
+                $project['github_user'] = '';
+            }
+            if ($dummyToken) {
+                $project['github_token'] = '';
+            }
+            $db->prepare("UPDATE projects SET github_user=?, github_token=? WHERE id=? AND user_id=?")
+               ->execute([$project['github_user'], $project['github_token'], $projectId, $userId]);
+        }
     }
 }
 
@@ -450,11 +463,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['execute_git_push'])) 
                 <div class="row">
                     <div class="col-md-6 mb-3">
                         <label class="form-label small fw-bold">GitHub Username</label>
-                        <input type="text" name="github_user" class="form-control form-control-sm" value="<?= htmlspecialchars(($project['github_user'] ?? '') ?: 'kartik') ?>" placeholder="e.g. kartik" required>
+                        <input type="text" name="github_user" class="form-control form-control-sm" value="<?= htmlspecialchars($project['github_user'] ?? '') ?>" placeholder="GitHub username" required>
                     </div>
                     <div class="col-md-6 mb-3">
                         <label class="form-label small fw-bold">GitHub Access Token / Password</label>
-                        <input type="password" name="github_token" class="form-control form-control-sm" value="<?= htmlspecialchars(($project['github_token'] ?? '') ?: '12345678') ?>" placeholder="e.g. 12345678" required>
+                        <input type="password" name="github_token" class="form-control form-control-sm" value="" placeholder="Personal access token or password" autocomplete="new-password" required>
                     </div>
                 </div>
                 <button type="submit" name="save_config" class="btn btn-primary btn-sm">
@@ -592,11 +605,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['execute_git_push'])) 
                             
                             <div class="mb-3 mt-3">
                                 <label class="form-label small fw-bold">GitHub Username</label>
-                                <input type="text" name="github_user" class="form-control form-control-sm" value="<?= htmlspecialchars($project['github_user'] ?: 'kartik') ?>" placeholder="e.g. kartik" required>
+                                <input type="text" name="github_user" class="form-control form-control-sm" value="<?= htmlspecialchars($project['github_user'] ?? '') ?>" placeholder="GitHub username" required>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label small fw-bold">GitHub Access Token (PAT)</label>
-                                <input type="password" name="github_token" class="form-control form-control-sm" value="<?= htmlspecialchars($project['github_token'] ?: '12345678') ?>" placeholder="ghp_••••••••••••" required>
+                                <input type="password" name="github_token" class="form-control form-control-sm" value="" placeholder="ghp_••••••••••••" autocomplete="new-password" required>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label small fw-bold">Deploy Branch</label>

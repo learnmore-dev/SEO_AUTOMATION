@@ -149,19 +149,111 @@ def symbaloo_post(email, password, keyword, target_url, custom_mix_url="", ai_de
             # Navigate to login
             log("Symbaloo: Navigating to login page...")
             try:
-                page.goto("https://www.symbaloo.com/login", wait_until="domcontentloaded", timeout=60000)
+                page.goto("https://www.symbaloo.com/login", wait_until="networkidle", timeout=90000)
             except Exception as ge:
                 log(f"Symbaloo: login page goto warning ({ge}), continuing...")
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(5000)
             
             close_consent_modal(page)
+            page.wait_for_timeout(2000)
+            
+            # Force Elm SPA mount if input not yet visible
+            try:
+                page.evaluate("""
+                    try {
+                        var ph = document.getElementById('elmPagePlaceholder');
+                        if (ph && ph.children.length === 0) {
+                            document.dispatchEvent(new Event('DOMContentLoaded'));
+                        }
+                    } catch(e) {}
+                """)
+            except Exception: pass
+            page.wait_for_timeout(2000)
             
             if "login" in page.url.lower():
                 log("Symbaloo: Logging in...")
                 
-                # Email input
-                email_input = page.locator("input[type='email'], input[name='email'], #email").first
-                email_input.wait_for(state="visible", timeout=15000)
+                # Wait for email input with extended timeout and multiple selectors
+                email_input = None
+                for attempt in range(20):
+                    close_consent_modal(page)
+                    # Force Elm mount on each attempt
+                    try:
+                        page.evaluate("""
+                            try {
+                                var ph = document.getElementById('elmPagePlaceholder');
+                                if (ph && ph.children.length === 0) {
+                                    document.dispatchEvent(new Event('DOMContentLoaded'));
+                                }
+                            } catch(e) {}
+                        """)
+                    except Exception: pass
+                    for sel in [
+                        "#loginDialogEmailInput",
+                        "input[id*='emailInput']",
+                        "input[type='email']",
+                        "input[name='email']",
+                        "#email",
+                        "input[placeholder*='email' i]",
+                        "input[placeholder*='E-mail' i]",
+                        "input[type='text']",
+                    ]:
+                        try:
+                            inp = page.locator(sel).first
+                            if inp.count() > 0 and inp.is_visible():
+                                email_input = inp
+                                log(f"Symbaloo: Found email input [{sel}] on attempt {attempt+1}")
+                                break
+                        except Exception: pass
+                    if email_input:
+                        break
+                    page.wait_for_timeout(1000)
+                
+                # If still not found, try homepage login button
+                if not email_input:
+                    log("Symbaloo: /login did not show inputs, trying homepage Login button...")
+                    try:
+                        page.goto("https://www.symbaloo.com/", wait_until="networkidle", timeout=60000)
+                    except Exception as ge2:
+                        log(f"Symbaloo: homepage goto warning ({ge2}), continuing...")
+                    page.wait_for_timeout(4000)
+                    close_consent_modal(page)
+                    # Click login button in navbar
+                    for sel in [
+                        "a[href*='login']",
+                        "button:has-text('Login')",
+                        "button:has-text('Log in')",
+                        "a:has-text('Login')",
+                        "a:has-text('Log in')",
+                        "[class*='login']",
+                    ]:
+                        try:
+                            lb = page.locator(sel).first
+                            if lb.count() > 0 and lb.is_visible():
+                                lb.click()
+                                log(f"Symbaloo: Clicked login button via {sel}")
+                                page.wait_for_timeout(4000)
+                                close_consent_modal(page)
+                                break
+                        except Exception: pass
+                    # Re-check for email input
+                    for sel in ["input[type='email']", "input[name='email']", "#email", "input[placeholder*='email' i]", "input[type='text']"]:
+                        try:
+                            inp = page.locator(sel).first
+                            if inp.count() > 0 and inp.is_visible():
+                                email_input = inp
+                                log(f"Symbaloo: Found email input via homepage [{sel}]")
+                                break
+                        except Exception: pass
+                
+                if not email_input:
+                    try:
+                        page.screenshot(path=os.path.join(os.path.dirname(script_dir), 'uploads', 'symbaloo_error.png'))
+                    except Exception: pass
+                    result(False, error="Symbaloo: Email input not found on login page (Page load or consent issue)")
+                    context.close()
+                    return
+                
                 email_input.click()
                 email_input.fill(email)
                 

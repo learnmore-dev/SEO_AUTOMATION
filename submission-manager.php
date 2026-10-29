@@ -279,6 +279,7 @@ $platforms = [
         'title' => '✍️ Micro Blogging',
         'color' => 'success',
         'sites' => [
+            ['id' => 'diigo',        'name' => 'Diigo',          'url' => 'https://www.diigo.com',        'what_system_does' => '✅ Diigo API — Saves your target URL as a public bookmark. Requires your Diigo API key and account credentials. Get an API key at diigo.com/api_keys/new/'],
             ['id' => 'scoopit',      'name' => 'Scoop.it',       'url' => 'https://www.scoop.it',        'what_system_does' => '📋 Semi-Auto — Auto Post dabavo → Title + Description auto-generate thay → Copy karo → Scoop.it khulse → Paste karo → Publish button dabavo'],
             ['id' => 'wakelet',      'name' => 'Wakelet',        'url' => 'https://wakelet.com',         'what_system_does' => '🤖 Browser Automation — Email+Password save karo. System collection create kare + URL add kare with keyword + backlink'],
             ['id' => 'vivauae',      'name' => 'Vivauae',        'url' => 'https://vivauae.com',         'what_system_does' => '🤖 Browser Automation — Email+Password save karo. System article submit kare with keyword + backlink'],
@@ -307,7 +308,7 @@ $platforms = [
         'color' => 'info',
         'sites' => [
             ['id' => 'devto',        'name' => 'Dev.to',         'url' => 'https://dev.to',              'what_system_does' => '✅ 100% Auto — API post. Get key: dev.to/settings/extensions'],
-            ['id' => 'hashnode',     'name' => 'Hashnode',       'url' => 'https://hashnode.com',        'what_system_does' => '✅ 100% Auto — GraphQL API post. Get key: hashnode.com/settings/developer'],
+            ['id' => 'hashnode',     'name' => 'Hashnode',       'url' => 'https://hashnode.com',        'what_system_does' => '✅ 100% Auto — GraphQL API (gql-beta.hashnode.com). PAT from hashnode.com/settings/developer. Blog must be on Hashnode Pro to publish.'],
             ['id' => 'ghost',        'name' => 'Ghost.io',       'url' => 'https://ghost.io',            'what_system_does' => '✅ 100% Auto — Admin API post. Get key: Ghost Admin → Integrations'],
             ['id' => 'site123',      'name' => 'Site123',        'url' => 'https://www.site123.com',     'what_system_does' => '🤖 Browser Automation — Email+Password save karo. System auto-login kare + blog post create kare with keyword + backlink'],
             ['id' => 'posteezy',     'name' => 'Posteezy',       'url' => 'https://www.posteezy.com',    'what_system_does' => 'Article with keyword + backlink'],
@@ -349,6 +350,100 @@ foreach ($platforms as $catKey => &$category) {
 }
 unset($category);
 
+function isFreeAutoPlatform(array $site): bool {
+    $id = strtolower($site['id'] ?? '');
+    if (isset($site['autopost']) && $site['autopost'] === false) {
+        return false;
+    }
+    // Paid API / paid hosting, or copy-paste only (not real auto-post)
+    $notFree = [
+        'hashnode', 'ghost', 'dribbble',
+        'google_business', 'pbase', 'dropbox', 'googledrive',
+        'scoopit', 'medium', 'substack',
+    ];
+    return !in_array($id, $notFree, true);
+}
+
+function getPlatformIcon($platformId) {
+    $iconMap = [
+        'pinterest'   => 'fab fa-pinterest text-danger',
+        'bluesky'     => 'fas fa-cloud text-primary',
+        'mastodon'    => 'fab fa-mastodon text-info',
+        'minds'       => 'fas fa-circle-notch text-dark',
+        'symbaloo'    => 'fas fa-th text-warning',
+        'diigo'       => 'fas fa-bookmark text-primary',
+        'devto'       => 'fab fa-dev text-dark',
+        'linktree'    => 'fas fa-tree text-success',
+        'site123'     => 'fas fa-globe text-primary',
+        'livejournal' => 'fas fa-book text-info',
+        'blogger'     => 'fab fa-blogger text-warning',
+        'tumblr'      => 'fab fa-tumblr text-primary',
+        'github'      => 'fab fa-github text-dark',
+        'dribbble'    => 'fab fa-dribbble text-danger',
+        'penzu'       => 'fas fa-pen-fancy text-primary',
+        'plurk'       => 'fas fa-comment-dots text-danger',
+        'scoopit'     => 'fas fa-newspaper text-info',
+        'wakelet'     => 'fas fa-bookmark text-primary',
+        'vivauae'     => 'fas fa-file-alt text-success',
+        'padlet'      => 'fas fa-clipboard text-warning',
+        'pearltrees'  => 'fas fa-sitemap text-info',
+        'mewe'        => 'fas fa-user-friends text-primary',
+        'instapaper'  => 'fas fa-newspaper text-dark',
+        'wordpress'   => 'fab fa-wordpress text-primary',
+        'medium'      => 'fab fa-medium text-dark',
+        'substack'    => 'fas fa-envelope-open-text text-warning',
+        'hashnode'    => 'fas fa-code text-primary',
+        'ghost'       => 'fas fa-ghost text-dark',
+        'imgbb'       => 'fas fa-images text-info',
+        'mediafire'   => 'fas fa-fire text-danger',
+        'fourshared'  => 'fas fa-cloud-upload-alt text-primary'
+    ];
+    return $iconMap[$platformId] ?? 'fas fa-share-alt text-secondary';
+}
+
+function getAllOrderedSites($platformsList) {
+    $primaryIds = ['pinterest', 'bluesky', 'mastodon', 'minds', 'symbaloo', 'devto', 'livejournal', 'blogger', 'tumblr', 'github'];
+    $orderedSitesList = [];
+    $addedIds = [];
+
+    // 1. Add primary 10 platforms in exact order
+    foreach ($primaryIds as $id) {
+        foreach ($platformsList as $catKey => $cat) {
+            foreach ($cat['sites'] as $site) {
+                if ($site['id'] === $id && !in_array($id, $addedIds)) {
+                    $site['icon'] = getPlatformIcon($id);
+                    $orderedSitesList[] = $site;
+                    $addedIds[] = $id;
+                    break 2;
+                }
+            }
+        }
+    }
+
+    // 2. Add remaining platforms (autopost first, then coming soon)
+    $otherAuto = [];
+    $otherComing = [];
+    foreach ($platformsList as $catKey => $cat) {
+        foreach ($cat['sites'] as $site) {
+            if (!in_array($site['id'], $addedIds)) {
+                $site['icon'] = getPlatformIcon($site['id']);
+                $isAuto = isset($site['autopost']) ? $site['autopost'] : true;
+                if ($isAuto) {
+                    $otherAuto[] = $site;
+                } else {
+                    $otherComing[] = $site;
+                }
+                $addedIds[] = $site['id'];
+            }
+        }
+    }
+
+    usort($otherAuto, fn($a, $b) => strcasecmp($a['name'], $b['name']));
+    usort($otherComing, fn($a, $b) => strcasecmp($a['name'], $b['name']));
+
+    return array_merge($orderedSitesList, $otherAuto, $otherComing);
+}
+
 // Handle AJAX Live Backlinks & Pending Tasks Table Fetch
 if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
     header('Content-Type: application/json');
@@ -362,7 +457,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
           AND status = 'created' 
           AND (keyword = ? OR (keyword IS NULL AND ? = ''))
           AND (target_url = ? OR target_url IS NULL OR (target_url IS NULL AND ? = ''))
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
     ");
     $createdBL->execute([$pId, $kw, $kw, $siteUrl, $siteUrl]);
     $createdBLList = $createdBL->fetchAll();
@@ -387,13 +482,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table class="table table-hover mb-0" id="createdBacklinksTable">
               <thead class="table-dark">
                 <tr><th>#</th><th>Platform</th><th>Backlink URL</th><th>Date Created</th><th>Link Status</th><th>Google Index</th><th>Action</th></tr>
               </thead>
               <tbody>
               <?php foreach ($createdBLList as $i => $bl): ?>
-                <tr id="bl-row-<?= $bl['id'] ?>">
+                <tr id="bl-row-<?= $bl['id'] ?>" class="bl-row" data-bl-index="<?= $i ?>">
                   <td><?= $i + 1 ?></td>
                   <td><span class="badge bg-success"><?= clean($bl['platform']) ?></span></td>
                   <td><a href="<?= clean($bl['backlink_url']) ?>" target="_blank" class="text-decoration-none"><?= clean(substr($bl['backlink_url'], 0, 60)) ?>...<i class="fas fa-external-link-alt ms-1 small"></i></a></td>
@@ -427,6 +522,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
             </table>
           </div>
         </div>
+        <div class="card-footer bg-white d-flex justify-content-between align-items-center py-2 flex-wrap gap-2 border-top">
+          <div class="small text-muted" id="backlinksPaginationInfo">
+            Showing 1 to <?= min(10, count($createdBLList)) ?> of <?= count($createdBLList) ?> Created Backlinks
+          </div>
+          <nav aria-label="Backlinks pagination">
+            <ul class="pagination pagination-sm mb-0" id="backlinksPagination"></ul>
+          </nav>
+        </div>
       </div>
     <?php endif;
     $createdHtml = ob_get_clean();
@@ -434,9 +537,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
     ob_start();
     if (!empty($pendingList)): ?>
       <div class="card mb-4 border-warning shadow-sm">
-        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center flex-wrap gap-2">
           <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Pending Tasks in Queue (<?= count($pendingList) ?>)</h5>
-          <span class="badge bg-dark text-white">System is processing these in background</span>
+          <div>
+            <button type="button" class="btn btn-sm btn-dark fw-bold me-2 shadow-sm" onclick="runWorkerNow(this)"><i class="fas fa-play me-1"></i>Process Queue Now</button>
+            <span class="badge bg-dark text-white">System is processing in background</span>
+          </div>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -461,37 +567,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
     <?php endif;
     $pendingHtml = ob_get_clean();
 
-    // Render Quick Status Cards Grid for the passed keyword and target_site
-    $primaryIds = ['pinterest', 'bluesky', 'mastodon', 'minds', 'symbaloo', 'devto', 'livejournal', 'blogger', 'tumblr', 'github'];
-    $primaryPlatformsList = [];
-    $iconMapList = [
-        'pinterest' => 'fab fa-pinterest text-danger',
-        'bluesky' => 'fas fa-cloud text-primary',
-        'mastodon' => 'fab fa-mastodon text-info',
-        'minds' => 'fas fa-circle-notch text-dark',
-        'symbaloo' => 'fas fa-th text-warning',
-        'devto' => 'fab fa-dev text-dark',
-        'linktree' => 'fas fa-tree text-success',
-        'site123' => 'fas fa-globe text-primary',
-        'livejournal' => 'fas fa-book text-info',
-        'blogger' => 'fab fa-blogger text-warning',
-        'tumblr' => 'fab fa-tumblr text-primary',
-        'github' => 'fab fa-github text-dark'
-    ];
-    foreach ($primaryIds as $id) {
-        foreach ($platforms as $catKey => $cat) {
-            foreach ($cat['sites'] as $site) {
-                if ($site['id'] === $id) {
-                    $site['icon'] = $iconMapList[$id] ?? 'fas fa-share-alt';
-                    $primaryPlatformsList[] = $site;
-                    break 2;
-                }
-            }
-        }
-    }
+    // Failed tasks section removed as requested — errors are already shown directly in platform rows
+    $failedHtml = '';
 
-    $savedAccountsStmt = $db->prepare("SELECT * FROM social_accounts WHERE project_id=?");
-    $savedAccountsStmt->execute([$pId]);
+    // Render Quick Status Cards Grid for ALL platforms
+    $allPlatformsList = getAllOrderedSites($platforms);
+
+    $savedAccountsStmt = $db->prepare("SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=?");
+    $savedAccountsStmt->execute([$pId, $userId]);
     $savedAccountsRows = $savedAccountsStmt->fetchAll();
     $savedMapAllList = [];
     foreach ($savedAccountsRows as $acc) {
@@ -501,17 +584,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
     ob_start();
     ?>
     <div class="row g-2">
-      <?php foreach ($primaryPlatformsList as $idx => $pSite): ?>
+      <?php foreach ($allPlatformsList as $idx => $pSite): ?>
         <?php 
         $pAllAccounts = $savedMapAllList[$pSite['id']] ?? [];
         $pCooldown = checkPlatformCooldown($db, $pId, $pSite['id'], $kw, $siteUrl, count($pAllAccounts));
         ?>
-        <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+        <div class="col-6 col-sm-4 col-md-3 col-lg-2 quick-card" data-quick-index="<?= $idx ?>">
           <div class="card h-100 border text-center p-2 bg-white shadow-none position-relative" style="transition: all 0.2s ease-in-out; border-radius: 8px;"
                onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.08)'; this.style.transform='translateY(-2px)';" 
                onmouseout="this.style.boxShadow='none'; this.style.transform='none';">
             <div class="position-absolute top-0 end-0 p-1" style="z-index:2;">
-              <input type="checkbox" class="form-check-input platform-select-checkbox" value="<?= $pSite['id'] ?>" onchange="updateSelectedPlatformsCount()" title="Select <?= htmlspecialchars($pSite['name']) ?>">
+              <input type="checkbox" class="form-check-input platform-select-checkbox" value="<?= $pSite['id'] ?>" data-free="<?= isFreeAutoPlatform($pSite) ? '1' : '0' ?>" onchange="updateSelectedPlatformsCount()" title="Select <?= htmlspecialchars($pSite['name']) ?>">
             </div>
             <div class="mb-1 mt-1">
               <i class="<?= $pSite['icon'] ?> fa-lg"></i>
@@ -562,8 +645,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_backlinks_html') {
         'success' => true,
         'createdCount' => count($createdBLList),
         'pendingCount' => count($pendingList),
-        'createdHtml' => $createdHtml,
-        'pendingHtml' => $pendingHtml,
+        'failedCount'  => 0,
+        'createdHtml'  => $createdHtml,
+        'pendingHtml'  => $pendingHtml,
+        'failedHtml'   => $failedHtml,
         'quickStatusHtml' => $quickStatusHtml,
         'primaryConsoleHtml' => $primaryConsoleHtml
     ]);
@@ -825,6 +910,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_platform'])) {
         $existing = $check->fetch();
     }
 
+    if ($platform === 'diigo' && (empty($apiKey) || (!$existing && trim($password) === ''))) {
+        $message = 'Diigo requires an API key and password. Create an API key at diigo.com/api_keys/new/.';
+        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) || isset($_POST['ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => $message]);
+            exit;
+        }
+        setFlash('danger', $message);
+        header('Location: submission-manager.php?project_id=' . $projectId);
+        exit;
+    }
+
     if ($platform === 'tumblr') {
         $token = $_POST['password'] ?? '';
         $secret = $_POST['tumblr_token_secret'] ?? '';
@@ -920,9 +1017,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_bulk_universal'])
         $parts = str_getcsv($line); // handle commas in values
         if (count($parts) < 3) { $errors[] = "Skipped (bad format): $line"; continue; }
         $platform  = clean(strtolower(trim($parts[0])));
-        $username  = clean(trim($parts[1]));
+        $username  = ltrim(clean(trim($parts[1])), '@');
         $password  = trim($parts[2]); // api_key or password
         $apiSecret = isset($parts[3]) ? clean(trim($parts[3])) : '';
+
+        if ($platform === 'diigo') {
+            if (trim($password) === '' || $apiSecret === '') {
+                $errors[] = 'Skipped Diigo account: use platform,username,password,api_key.';
+                continue;
+            }
+            $db->prepare("INSERT INTO social_accounts (user_id, platform, username, password, api_key, status) VALUES (?,?,?,?,?,'active')")
+               ->execute([$userId, $platform, $username, base64_encode($password), $apiSecret]);
+            $added++;
+            continue;
+        }
 
         // For platforms using api_key (devto, github, hashnode, plurk, tumblr, wordpress)
         $apiKeyPlatforms = ['devto','github','hashnode','plurk','tumblr','wordpress','blogger','ghost','minds'];
@@ -1072,8 +1180,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generate_schema'])) {
 }
 
 // Fetch saved credentials
-$savedAccounts = $db->prepare("SELECT * FROM social_accounts WHERE project_id=?");
-$savedAccounts->execute([$selectedProjectId]);
+$savedAccounts = $db->prepare("SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=?");
+$savedAccounts->execute([$selectedProjectId, $userId]);
 $savedAccounts = $savedAccounts->fetchAll();
 $savedAccountsRows = $savedAccounts ?: [];
 // savedMap: platform => first account (for backward compat)
@@ -1094,6 +1202,8 @@ function checkPlatformCooldown($db, $projectId, $platform, $keyword, $targetUrl,
     // Cooldown is 12 hours = 43200 seconds
     $cooldownPeriod = 43200; 
 
+    $twelveHoursAgo = date('Y-m-d H:i:s', time() - $cooldownPeriod);
+
     // Retrieve all posts created for this specific platform, project, keyword & target_url in the last 12 hours
     $blCheck = $db->prepare("
         SELECT created_at FROM backlinks 
@@ -1102,7 +1212,7 @@ function checkPlatformCooldown($db, $projectId, $platform, $keyword, $targetUrl,
           AND status = 'created' 
           AND keyword = ?
           AND (target_url = ? OR (target_url IS NULL AND ? = ''))
-          AND created_at >= DATE_SUB(NOW(), INTERVAL 12 HOUR)
+          AND created_at >= ?
         ORDER BY created_at DESC
     ");
     $blCheck->execute([
@@ -1110,7 +1220,8 @@ function checkPlatformCooldown($db, $projectId, $platform, $keyword, $targetUrl,
         $platform, 
         $keyword, 
         $targetUrl,
-        $targetUrl
+        $targetUrl,
+        $twelveHoursAgo
     ]);
     $recentPosts = $blCheck->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1139,27 +1250,58 @@ function checkPlatformCooldown($db, $projectId, $platform, $keyword, $targetUrl,
     ];
 }
 
-function getPrimaryConsoleSites($platformsList) {
-    $primaryIds = ['pinterest', 'bluesky', 'mastodon', 'minds', 'symbaloo', 'devto', 'livejournal', 'blogger', 'tumblr', 'github'];
-    $orderedSitesList = [];
-    $addedIds = [];
-
-    foreach ($primaryIds as $id) {
-        foreach ($platformsList as $catKey => $cat) {
-            foreach ($cat['sites'] as $site) {
-                if ($site['id'] === $id && !in_array($id, $addedIds)) {
-                    $orderedSitesList[] = $site;
-                    $addedIds[] = $id;
-                    break 2;
-                }
-            }
+function getFriendlyErrorSummary(?string $err): string {
+    if (empty($err)) return 'Unknown execution error';
+    $err = trim($err);
+    if (stripos($err, "No module named 'playwright'") !== false) {
+        return "Python Playwright missing (Switched to Selenium)";
+    }
+    if (stripos($err, "401") !== false || stripos($err, "unauthorized") !== false) {
+        return "401 Unauthorized — Invalid API Key / Token expired";
+    }
+    if (stripos($err, "No empty cells") !== false) {
+        return "Symbaloo Webmix is full (No empty tile cells)";
+    }
+    if (stripos($err, "tileSearchInput") !== false || stripos($err, "multiple empty cells") !== false) {
+        return "Symbaloo: Tile editor popup blocked by tour overlay";
+    }
+    if (stripos($err, "Email input not found") !== false) {
+        return "Symbaloo: Login form SPA bundle loading delayed";
+    }
+    if (stripos($err, "stale element") !== false) {
+        return "Browser page reloaded before action completed";
+    }
+    if (stripos($err, "login") !== false && (stripos($err, "failed") !== false || stripos($err, "incorrect") !== false || stripos($err, "invalid") !== false)) {
+        return "Login failed — Check username & password";
+    }
+    if (stripos($err, "credentials") !== false && stripos($err, "not found") !== false) {
+        return "Account credentials not found in database";
+    }
+    if (stripos($err, "timeout") !== false || stripos($err, "timed out") !== false) {
+        return "Process timed out — site took too long to respond";
+    }
+    if (stripos($err, "No uploaded image found") !== false) {
+        return "Project image required for this post";
+    }
+    if (stripos($err, "Rate limit") !== false || stripos($err, "429") !== false) {
+        return "Rate limit exceeded on platform (Try later)";
+    }
+    if (strpos($err, "Traceback") !== false) {
+        $lines = array_filter(array_map('trim', explode("\n", $err)));
+        $last = end($lines);
+        if ($last) {
+            return mb_strimwidth($last, 0, 80, '...');
         }
     }
-    return array_slice($orderedSitesList, 0, 10);
+    return mb_strimwidth(strip_tags($err), 0, 75, '...');
+}
+
+function getPrimaryConsoleSites($platformsList) {
+    return getAllOrderedSites($platformsList);
 }
 
 function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword, $currentTargetSite, $platformsList, $savedAccountsRows) {
-    $firstBoxList = getPrimaryConsoleSites($platformsList);
+    $firstBoxList = getAllOrderedSites($platformsList);
     $savedMap = [];
     $savedMapAll = [];
     foreach (($savedAccountsRows ?: []) as $acc) {
@@ -1170,19 +1312,23 @@ function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword,
     ?>
     <div class="card mb-4 border-0 shadow-sm" id="primaryConsoleCard">
       <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <h5 class="mb-0"><i class="fas fa-list me-2"></i>Primary Platforms Console (1 - 10)</h5>
-        <div>
-          <button class="btn btn-sm btn-success text-white fw-bold me-2 shadow-sm" id="btnRunSelected" onclick="runSelectedPlatforms(<?= $selectedProjectId ?>)">
+        <h5 class="mb-0"><i class="fas fa-list me-2"></i>Platform Submission Console (Total: <?= count($firstBoxList) ?> Platforms)</h5>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <input type="text" id="platformSearchInput" class="form-control form-control-sm bg-white text-dark" placeholder="🔍 Search platform..." style="max-width: 170px;" onkeyup="filterPlatforms(this.value)">
+          <button class="btn btn-sm btn-outline-info fw-bold" type="button" onclick="selectFreePlatforms()" title="Tick all free auto-post platforms">
+            <i class="fas fa-check-double me-1"></i>Select Free
+          </button>
+          <button class="btn btn-sm btn-success text-white fw-bold shadow-sm" id="btnRunSelected" onclick="runSelectedPlatforms(<?= $selectedProjectId ?>)">
             <i class="fas fa-play me-1"></i>Run Selected (<span id="selectedCount">0</span>)
           </button>
           <button class="btn btn-sm btn-outline-light fw-bold" onclick="autoPostAll(<?= $selectedProjectId ?>)">
-            <i class="fas fa-paper-plane me-1"></i>Run All Primary
+            <i class="fas fa-paper-plane me-1"></i>Run All Platforms
           </button>
         </div>
       </div>
       <div class="card-body p-0">
         <div class="table-responsive">
-          <table class="table table-hover mb-0 align-middle">
+          <table class="table table-hover mb-0 align-middle" id="platformsTable">
             <thead class="table-light">
               <tr>
                 <th style="width: 4%; text-align: center;">
@@ -1202,9 +1348,9 @@ function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword,
               $saved = isset($savedMap[$site['id']]);
               $allAccounts = $savedMapAll[$site['id']] ?? []; 
               ?>
-              <tr>
+              <tr class="platform-row" data-platform-index="<?= $idx ?>" data-platform-name="<?= strtolower(htmlspecialchars($site['name'])) ?>" data-platform-id="<?= $site['id'] ?>">
                 <td class="text-center">
-                  <input type="checkbox" class="form-check-input platform-select-checkbox" value="<?= $site['id'] ?>" onchange="updateSelectedPlatformsCount()">
+                  <input type="checkbox" class="form-check-input platform-select-checkbox" value="<?= $site['id'] ?>" data-free="<?= isFreeAutoPlatform($site) ? '1' : '0' ?>" onchange="updateSelectedPlatformsCount()">
                 </td>
                 <td><?= $idx + 1 ?></td>
                 <td>
@@ -1223,17 +1369,46 @@ function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword,
                     <span class="text-muted small">Coming Soon</span>
                   <?php else: ?>
                     <?php if (!empty($allAccounts)): ?>
-                      <?php foreach ($allAccounts as $acc): ?>
+                      <?php 
+                      // Map queue status per account
+                      $accQueueStmt = $db->prepare("SELECT social_account_id, status, error_message, updated_at FROM backlink_queue WHERE project_id=? AND platform=? AND (keyword=? OR (keyword IS NULL AND ?='')) AND (target_url=? OR target_url IS NULL OR (target_url IS NULL AND ?='')) ORDER BY id DESC");
+                      $accQueueStmt->execute([$selectedProjectId, $site['id'], $currentKeyword, $currentKeyword, $currentTargetSite, $currentTargetSite]);
+                      $accQueueMap = [];
+                      while ($row = $accQueueStmt->fetch(PDO::FETCH_ASSOC)) {
+                          if (!empty($row['social_account_id']) && !isset($accQueueMap[$row['social_account_id']])) {
+                              $accQueueMap[$row['social_account_id']] = $row;
+                          }
+                      }
+                      ?>
+                      <?php foreach ($allAccounts as $acc): 
+                        $accQ = $accQueueMap[$acc['id']] ?? null;
+                        $isAccFailed = ($accQ && $accQ['status'] === 'failed');
+                      ?>
                       <div class="d-flex align-items-center gap-1 mb-1">
-                        <span class="text-success small">
-                          <i class="fas fa-check-circle me-1"></i><?php
-                            if ($site['id'] === 'mastodon' && !empty($acc['api_secret'])) {
-                                echo clean($acc['api_secret']);
-                            } else {
-                                echo clean($acc['username']);
-                            }
-                          ?>
-                        </span>
+                        <?php if ($isAccFailed): ?>
+                          <span class="text-danger small fw-semibold" title="Last attempt failed: <?= htmlspecialchars($accQ['error_message'] ?? '') ?>">
+                            <i class="fas fa-times-circle text-danger me-1"></i><?php
+                              if ($site['id'] === 'mastodon' && !empty($acc['api_secret'])) {
+                                  echo clean($acc['api_secret']);
+                              } else {
+                                  echo clean($acc['username']);
+                              }
+                            ?>
+                            <a href="javascript:void(0)" class="badge bg-danger text-white text-decoration-none ms-1" style="font-size:9px; cursor:pointer;" onclick="showFailureReasonModal('<?= clean($site['name']) ?>', '<?= clean($acc['username']) ?>', <?= htmlspecialchars(json_encode($accQ['error_message'] ?? 'Unknown Error')) ?>, '<?= $accQ['updated_at'] ?? '' ?>', '<?= $site['id'] ?>', <?= $acc['id'] ?>)" title="Click to view failure reason">
+                              <i class="fas fa-info-circle me-1"></i>Failed
+                            </a>
+                          </span>
+                        <?php else: ?>
+                          <span class="text-success small">
+                            <i class="fas fa-check-circle me-1"></i><?php
+                              if ($site['id'] === 'mastodon' && !empty($acc['api_secret'])) {
+                                  echo clean($acc['api_secret']);
+                              } else {
+                                  echo clean($acc['username']);
+                              }
+                            ?>
+                          </span>
+                        <?php endif; ?>
                         <button class="btn btn-xs btn-outline-success py-0 px-1"
                                 onclick="autoPost('<?= $site['id'] ?>', '<?= $site['name'] ?>', <?= (int)$selectedProjectId ?>, <?= $acc['id'] ?>)"
                                 title="Post using this specific account">
@@ -1280,9 +1455,9 @@ function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword,
                   <?php
                   $cooldown = checkPlatformCooldown($db, $selectedProjectId, $site['id'], $currentKeyword, $currentTargetSite, count($allAccounts));
                   
-                  // Fetch the latest background queue task for this platform
-                  $queueStmt = $db->prepare("SELECT status, error_message FROM backlink_queue WHERE project_id=? AND platform=? AND keyword=? AND target_url=? ORDER BY id DESC LIMIT 1");
-                  $queueStmt->execute([$selectedProjectId, $site['id'], $currentKeyword, $currentTargetSite]);
+                  // Fetch the latest background queue task for this platform with account details
+                  $queueStmt = $db->prepare("SELECT q.status, q.error_message, q.updated_at, q.social_account_id, sa.username FROM backlink_queue q LEFT JOIN social_accounts sa ON q.social_account_id = sa.id WHERE q.project_id=? AND q.platform=? AND (q.keyword=? OR (q.keyword IS NULL AND ?='')) AND (q.target_url=? OR q.target_url IS NULL OR (q.target_url IS NULL AND ?='')) ORDER BY q.id DESC LIMIT 1");
+                  $queueStmt->execute([$selectedProjectId, $site['id'], $currentKeyword, $currentKeyword, $currentTargetSite, $currentTargetSite]);
                   $qItem = $queueStmt->fetch(PDO::FETCH_ASSOC);
                   ?>
                   <?php if ($cooldown['is_cooldown']): ?>
@@ -1293,8 +1468,34 @@ function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword,
                     <span class="badge bg-warning text-dark"><i class="fas fa-clock me-1"></i>⏳ Queued</span>
                   <?php elseif ($qItem && $qItem['status'] === 'processing'): ?>
                     <span class="badge bg-info"><i class="fas fa-spinner fa-spin me-1"></i>⚙️ Posting...</span>
-                  <?php elseif ($qItem && $qItem['status'] === 'failed'): ?>
-                    <span class="badge bg-danger text-white" style="cursor:help;" title="<?= htmlspecialchars($qItem['error_message'] ?? 'Unknown Error') ?>"><i class="fas fa-exclamation-triangle me-1"></i>❌ Failed</span>
+                  <?php elseif ($qItem && $qItem['status'] === 'success'): ?>
+                    <span class="badge bg-success"><i class="fas fa-check-circle me-1"></i>Posted ✅</span>
+                  <?php elseif ($qItem && $qItem['status'] === 'failed'): 
+                    $cleanErr = $qItem['error_message'] ?? 'Unknown Error';
+                    $shortReason = getFriendlyErrorSummary($cleanErr);
+                    $failedAccName = $qItem['username'] ?? (!empty($allAccounts) ? $allAccounts[0]['username'] : '');
+                  ?>
+                    <div class="d-inline-flex flex-column align-items-start">
+                      <button type="button" class="btn btn-sm btn-danger py-0 px-2 fw-bold text-white shadow-none d-inline-flex align-items-center gap-1"
+                              style="font-size: 11px;"
+                              onclick="showFailureReasonModal('<?= clean($site['name']) ?>', '<?= clean($failedAccName) ?>', <?= htmlspecialchars(json_encode($cleanErr)) ?>, '<?= $qItem['updated_at'] ?? '' ?>', '<?= $site['id'] ?>', <?= (int)($qItem['social_account_id'] ?? 0) ?>)"
+                              title="Click to view full failure reason">
+                        <i class="fas fa-exclamation-triangle"></i> Failed
+                        <i class="fas fa-info-circle ms-1"></i>
+                      </button>
+                      <div class="mt-1 p-1 bg-danger bg-opacity-10 rounded border border-danger border-opacity-25 text-danger" 
+                           style="font-size: 11px; max-width: 195px; line-height: 1.25; cursor: pointer;"
+                           onclick="showFailureReasonModal('<?= clean($site['name']) ?>', '<?= clean($failedAccName) ?>', <?= htmlspecialchars(json_encode($cleanErr)) ?>, '<?= $qItem['updated_at'] ?? '' ?>', '<?= $site['id'] ?>', <?= (int)($qItem['social_account_id'] ?? 0) ?>)"
+                           title="Click to view full reason">
+                        <div class="fw-bold" style="font-size: 10px;"><i class="fas fa-times-circle me-1"></i>Reason:</div>
+                        <div class="text-truncate" style="max-width: 180px;" title="<?= htmlspecialchars($cleanErr) ?>">
+                          <?= htmlspecialchars($shortReason) ?>
+                        </div>
+                        <div class="text-primary fw-semibold text-decoration-underline mt-1" style="font-size: 10px;">
+                          <i class="fas fa-search me-1"></i>Click for details
+                        </div>
+                      </div>
+                    </div>
                   <?php elseif ($saved): ?>
                     <span class="badge bg-success">Ready to Post</span>
                   <?php else: ?>
@@ -1324,61 +1525,24 @@ function renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword,
           </table>
         </div>
       </div>
+      <div class="card-footer bg-white d-flex justify-content-between align-items-center py-2 flex-wrap gap-2 border-top">
+        <div class="small text-muted" id="platformsPaginationInfo">
+          Showing 1 to 10 of <?= count($firstBoxList) ?> platforms
+        </div>
+        <nav aria-label="Platforms navigation">
+          <ul class="pagination pagination-sm mb-0" id="platformsPagination">
+            <!-- Populated via JS -->
+          </ul>
+        </nav>
+      </div>
     </div>
     <?php
     return ob_get_clean();
 }
 
-
-
-// 10 Primary platforms (linktree and site123 moved to secondary)
-$primaryIds = ['pinterest', 'bluesky', 'mastodon', 'minds', 'symbaloo', 'devto', 'livejournal', 'blogger', 'tumblr', 'github'];
-
-$orderedSitesList = [];
-$addedIds = [];
-
-// 1. Add the primary 12 platforms in the exact order requested
-foreach ($primaryIds as $id) {
-    foreach ($platforms as $catKey => $cat) {
-        foreach ($cat['sites'] as $site) {
-            if ($site['id'] === $id && !in_array($id, $addedIds)) {
-                $orderedSitesList[] = $site;
-                $addedIds[] = $id;
-                break 2;
-            }
-        }
-    }
-}
-
-// 2. Add all other remaining platforms
-// Grouped into auto-post first, then coming soon
-$otherAuto = [];
-$otherComing = [];
-
-foreach ($platforms as $catKey => $cat) {
-    foreach ($cat['sites'] as $site) {
-        if (!in_array($site['id'], $addedIds)) {
-            $isAuto = isset($site['autopost']) ? $site['autopost'] : true;
-            if ($isAuto) {
-                $otherAuto[] = $site;
-            } else {
-                $otherComing[] = $site;
-            }
-            $addedIds[] = $site['id'];
-        }
-    }
-}
-
-// Sort others alphabetically to be neat
-usort($otherAuto, fn($a, $b) => strcasecmp($a['name'], $b['name']));
-usort($otherComing, fn($a, $b) => strcasecmp($a['name'], $b['name']));
-
-// Combine them into a single flat array
-$orderedSitesList = array_merge($orderedSitesList, $otherAuto, $otherComing);
-
-// Split into two boxes: 1-10 and 11-45 (linktree and site123 moved to secondary)
-$firstBoxList  = array_slice($orderedSitesList, 0, 10);
-$secondBoxList = array_slice($orderedSitesList, 10);
+$orderedSitesList = getAllOrderedSites($platforms);
+$firstBoxList = $orderedSitesList;
+$secondBoxList = [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1389,25 +1553,32 @@ $secondBoxList = array_slice($orderedSitesList, 10);
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="style.css" rel="stylesheet">
+<style>
+  .platform-row { transition: all 0.2s ease-in-out; }
+  .quick-card { transition: all 0.2s ease-in-out; }
+  .bl-row { transition: all 0.2s ease-in-out; }
+  .pagination .page-link { color: #0d6efd; font-weight: 500; }
+  .pagination .page-item.active .page-link { background-color: #0d6efd; border-color: #0d6efd; color: #fff; }
+</style>
 </head>
 <body>
 <?php include 'includes/navbar.php'; ?>
-<div class="container-fluid py-4">
+<div class="container-fluid px-0 py-2">
 
-  <div class="row mb-4">
+  <div class="row mb-4 align-items-end">
     <div class="col">
-      <h3><i class="fas fa-paper-plane me-2 text-primary"></i>Submission Manager</h3>
-      <p class="text-muted">Provide user credentials → System will post automatically</p>
+      <div class="text-muted small fw-semibold mb-1" style="letter-spacing:.08em;text-transform:uppercase;font-size:11px;">Workspace / Submissions</div>
+      <h3 class="mb-1 fw-bold">Submission Manager</h3>
+      <p class="text-muted mb-0">Credentials save karo — system auto-post karega</p>
     </div>
-    <div class="col-auto d-flex align-items-center gap-2">
-      <!-- PC Agent Connection Badge & Download Button -->
-      <a href="download-agent.php" class="btn btn-sm btn-primary fw-bold shadow-sm" title="Download portable 1-click PC Agent for your computer">
-        <i class="fas fa-download me-1"></i>Download PC Agent
+    <div class="col-auto d-flex align-items-center gap-2 flex-wrap">
+      <a href="download-agent.php" class="btn btn-sm btn-primary" title="Download portable 1-click PC Agent for your computer">
+        <i class="fas fa-download me-1"></i>PC Agent
       </a>
-      <div id="pcAgentBadge" class="badge bg-secondary p-2 shadow-sm" style="font-size: 13px; font-weight: 500; cursor: pointer;" onclick="promptPcAgentUrl()" title="Click to configure PC Agent HTTPS Tunnel URL or test connection">
-        <span class="spinner-border spinner-border-sm me-1"></span>Checking PC Agent...
+      <div id="pcAgentBadge" class="badge bg-secondary p-2" style="font-size: 12px; font-weight: 600; cursor: pointer;" onclick="promptPcAgentUrl()" title="Click to configure PC Agent HTTPS Tunnel URL or test connection">
+        <span class="spinner-border spinner-border-sm me-1"></span>Checking...
       </div>
-      <button type="button" class="btn btn-sm btn-outline-secondary fw-bold shadow-sm" onclick="promptPcAgentUrl()" title="Configure Custom Tunnel / Remote PC URL">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="promptPcAgentUrl()" title="Configure Custom Tunnel / Remote PC URL">
         <i class="fas fa-cog me-1"></i>Settings
       </button>
       <!-- Project selector -->
@@ -1442,7 +1613,7 @@ $secondBoxList = array_slice($orderedSitesList, 10);
   $currentTargetSite = $_GET['target_site'] ?? $targetSitesList[0] ?? '';
   ?>
   <!-- Keyword & Target Page URL Selectors for Auto-Post -->
-  <div class="card mb-3 border-info shadow-sm bg-light">
+  <div class="card mb-3">
     <div class="card-body py-2 px-3 d-flex align-items-center flex-wrap gap-3">
       <div class="d-flex align-items-center gap-2">
         <strong class="small text-muted mb-0"><i class="fas fa-key me-1"></i> Select Keyword for Auto-Post:</strong>
@@ -1503,7 +1674,8 @@ $secondBoxList = array_slice($orderedSitesList, 10);
   </div>
 
   <!-- Project Info Banner -->
-  <div class="alert alert-success mb-4">
+  <div class="card mb-4">
+    <div class="card-body">
     <div class="row align-items-center">
       <div class="col-md-7">
         <strong><i class="fas fa-info-circle me-2"></i>Project Details:</strong>
@@ -1561,40 +1733,11 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
         </div>
       </div>
     </div>
+    </div>
   </div>
 
   <?php
-  // 10 Primary platforms (linktree and site123 moved to secondary)
-  $primaryIds = ['pinterest', 'bluesky', 'mastodon', 'minds', 'symbaloo', 'devto', 'livejournal', 'blogger', 'tumblr', 'github'];
-  $primaryPlatforms = [];
-  
-  // Icon Mapping
-  $iconMap = [
-      'pinterest' => 'fab fa-pinterest text-danger',
-      'bluesky' => 'fas fa-cloud text-primary',
-      'mastodon' => 'fab fa-mastodon text-info',
-      'minds' => 'fas fa-circle-notch text-dark',
-      'symbaloo' => 'fas fa-th text-warning',
-      'devto' => 'fab fa-dev text-dark',
-      'linktree' => 'fas fa-tree text-success',
-      'site123' => 'fas fa-globe text-primary',
-      'livejournal' => 'fas fa-book text-info',
-      'blogger' => 'fab fa-blogger text-warning',
-      'tumblr' => 'fab fa-tumblr text-primary',
-      'github' => 'fab fa-github text-dark'
-  ];
-
-  foreach ($primaryIds as $id) {
-      foreach ($platforms as $catKey => $cat) {
-          foreach ($cat['sites'] as $site) {
-              if ($site['id'] === $id) {
-                  $site['icon'] = $iconMap[$id] ?? 'fas fa-share-alt';
-                  $primaryPlatforms[] = $site;
-                  break 2;
-              }
-          }
-      }
-  }
+  $primaryPlatforms = getAllOrderedSites($platforms);
   ?>
 
   <!-- AI SEO Schema Markup Card -->
@@ -1638,18 +1781,29 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
     </div>
   </div>
 
-  <!-- Primary Platforms Status Widget -->
+  <!-- Platforms Status Widget -->
   <div class="card mb-4 border-primary shadow-sm">
     <div class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <h6 class="mb-0 fw-bold"><i class="fas fa-star me-2"></i>Primary Platforms Quick Status</h6>
       <div class="d-flex align-items-center gap-2">
+        <h6 class="mb-0 fw-bold"><i class="fas fa-star me-2"></i>Platforms Quick Status</h6>
+        <span class="badge bg-light text-primary small fw-bold"><span id="quickTotalBadge"><?= count($primaryPlatforms) ?></span> Platforms</span>
+      </div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <div class="btn-group btn-group-sm" id="quickNavControls">
+          <button type="button" class="btn btn-outline-light py-0 px-2 fw-bold" id="quickPrevBtn" onclick="changeQuickPage(-1)" title="Previous 12 Platforms">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          <span class="btn btn-light py-0 px-2 fw-bold text-primary disabled" id="quickPageIndicator" style="opacity: 1;">Page 1/4</span>
+          <button type="button" class="btn btn-outline-light py-0 px-2 fw-bold" id="quickNextBtn" onclick="changeQuickPage(1)" title="Next 12 Platforms">
+            <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
         <button class="btn btn-sm btn-success text-white fw-bold shadow-sm" id="btnRunSelectedHeader" onclick="runSelectedPlatforms(<?= $selectedProjectId ?>)">
           <i class="fas fa-play me-1"></i>Run Selected (<span id="selectedCountHeader">0</span>)
         </button>
         <button class="btn btn-sm btn-light text-primary fw-bold" onclick="autoPostAll(<?= $selectedProjectId ?>)">
-          <i class="fas fa-paper-plane me-1"></i>Run All Primary
+          <i class="fas fa-paper-plane me-1"></i>Run All Platforms
         </button>
-        <span class="badge bg-light text-primary small fw-bold">10 Platforms</span>
       </div>
     </div>
     <div class="card-body p-3 bg-light" id="quickStatusGridContainer">
@@ -1662,12 +1816,12 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
           // Cooldown check
           $pCooldown = checkPlatformCooldown($db, $selectedProjectId, $pSite['id'], $currentKeyword, $currentTargetSite, count($pAllAccounts));
           ?>
-          <div class="col-6 col-sm-4 col-md-3 col-lg-2">
+          <div class="col-6 col-sm-4 col-md-3 col-lg-2 quick-card" data-quick-index="<?= $idx ?>">
             <div class="card h-100 border text-center p-2 bg-white shadow-none position-relative" style="transition: all 0.2s ease-in-out; border-radius: 8px;"
                  onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.08)'; this.style.transform='translateY(-2px)';" 
                  onmouseout="this.style.boxShadow='none'; this.style.transform='none';">
               <div class="position-absolute top-0 end-0 p-1" style="z-index:2;">
-                <input type="checkbox" class="form-check-input platform-select-checkbox" value="<?= $pSite['id'] ?>" onchange="updateSelectedPlatformsCount()" title="Select <?= htmlspecialchars($pSite['name']) ?>">
+                <input type="checkbox" class="form-check-input platform-select-checkbox" value="<?= $pSite['id'] ?>" data-free="<?= isFreeAutoPlatform($pSite) ? '1' : '0' ?>" onchange="updateSelectedPlatformsCount()" title="Select <?= htmlspecialchars($pSite['name']) ?>">
               </div>
               <div class="mb-1 mt-1">
                 <i class="<?= $pSite['icon'] ?> fa-lg"></i>
@@ -1709,6 +1863,16 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
           </div>
         <?php endforeach; ?>
       </div>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-between align-items-center py-2 flex-wrap gap-2 border-top">
+      <div class="small text-muted" id="quickPaginationInfo">
+        Showing 1 to <?= min(12, count($primaryPlatforms)) ?> of <?= count($primaryPlatforms) ?> platforms
+      </div>
+      <nav aria-label="Platforms quick navigation">
+        <ul class="pagination pagination-sm mb-0" id="quickPaginationList">
+          <!-- Populated via JS -->
+        </ul>
+      </nav>
     </div>
   </div>
 
@@ -1854,7 +2018,7 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
         AND status = 'created' 
         AND (keyword = ? OR (keyword IS NULL AND ? = ''))
         AND (target_url = ? OR target_url IS NULL OR (target_url IS NULL AND ? = ''))
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
   ");
   $createdBL->execute([$selectedProjectId, $currentKeyword, $currentKeyword, $currentTargetSite, $currentTargetSite]);
   $createdBL = $createdBL->fetchAll();
@@ -1873,7 +2037,7 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0">
+        <table class="table table-hover mb-0" id="createdBacklinksTable">
           <thead class="table-dark">
             <tr>
               <th>#</th>
@@ -1887,7 +2051,7 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
           </thead>
           <tbody>
           <?php foreach ($createdBL as $i => $bl): ?>
-            <tr id="bl-row-<?= $bl['id'] ?>">
+            <tr id="bl-row-<?= $bl['id'] ?>" class="bl-row" data-bl-index="<?= $i ?>">
               <td><?= $i + 1 ?></td>
               <td>
                 <span class="badge bg-success"><?= clean($bl['platform']) ?></span>
@@ -1953,6 +2117,16 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
         </table>
       </div>
     </div>
+    <div class="card-footer bg-white d-flex justify-content-between align-items-center py-2 flex-wrap gap-2 border-top">
+      <div class="small text-muted" id="backlinksPaginationInfo">
+        Showing 1 to <?= min(10, count($createdBL)) ?> of <?= count($createdBL) ?> Created Backlinks
+      </div>
+      <nav aria-label="Backlinks pagination">
+        <ul class="pagination pagination-sm mb-0" id="backlinksPagination">
+          <!-- Populated via JS -->
+        </ul>
+      </nav>
+    </div>
   </div>
   <?php endif; ?>
   </div>
@@ -1974,12 +2148,15 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
   <div id="pendingTasksSection">
   <?php if (!empty($pendingTasks)): ?>
   <div class="card mb-4 border-warning shadow-sm">
-    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center flex-wrap gap-2">
       <h5 class="mb-0">
         <i class="fas fa-clock me-2"></i>
         Pending Tasks in Queue (<?= count($pendingTasks) ?>)
       </h5>
-      <span class="badge bg-dark text-white">System is processing these in background</span>
+      <div>
+        <button type="button" class="btn btn-sm btn-dark fw-bold me-2 shadow-sm" onclick="runWorkerNow(this)"><i class="fas fa-play me-1"></i>Process Queue Now</button>
+        <span class="badge bg-dark text-white">System is processing in background</span>
+      </div>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -2012,152 +2189,18 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
   </div>
   <?php endif; ?>
   </div>
-  
-  <?php endif; ?>
 
-  <!-- Platform Submission Console (1 - 10) -->
+  <!-- Failed Submissions Section removed as requested: failure details are available directly per platform row -->
+  <div id="failedTasksSection" style="display:none;"></div>
+
+  <!-- Unified Platform Submission Console (All 45 Platforms with 10 pagination) -->
   <div id="primaryConsoleContainer">
     <?= renderPrimaryConsoleTableHtml($db, $selectedProjectId, $currentKeyword, $currentTargetSite, $platforms, $savedAccountsRows) ?>
   </div>
 
-  <!-- Platform Submission Console (11 - 45) -->
-  <div class="card mb-4 border-0 shadow-sm">
-    <div class="card-header bg-dark text-white">
-      <h5 class="mb-0"><i class="fas fa-list me-2"></i>Secondary Platforms Console (11 - 45)</h5>
-    </div>
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-hover mb-0">
-          <thead class="table-light">
-            <tr>
-              <th style="width: 5%;">#</th>
-              <th style="width: 15%;">Platform</th>
-              <th style="width: 35%;">What System Does Automatically</th>
-              <th style="width: 20%;">Your Credentials</th>
-              <th style="width: 12%;">Status</th>
-              <th style="width: 13%;">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-          <?php foreach ($secondBoxList as $idx => $site): ?>
-            <?php 
-            $saved = isset($savedMap[$site['id']]);
-            $allAccounts = $savedMapAll[$site['id']] ?? []; 
-            ?>
-            <tr>
-              <td><?= $idx + 14 ?></td>
-              <td>
-                <strong><?= htmlspecialchars($site['name']) ?></strong><br>
-                <a href="<?= htmlspecialchars($site['url']) ?>" target="_blank" class="small text-muted">
-                  <?= htmlspecialchars(substr($site['url'], 0, 30)) ?><?= strlen($site['url']) > 30 ? '...' : '' ?> <i class="fas fa-external-link-alt"></i>
-                </a>
-              </td>
-              <td>
-                <small class="text-success">
-                  <i class="fas fa-robot me-1"></i><?= htmlspecialchars($site['what_system_does']) ?>
-                </small>
-              </td>
-              <td>
-                <?php if (isset($site['autopost']) && $site['autopost'] === false && empty($allAccounts)): ?>
-                  <span class="text-muted small">Coming Soon</span>
-                <?php else: ?>
-                  <?php if (!empty($allAccounts)): ?>
-                    <?php foreach ($allAccounts as $acc): ?>
-                    <div class="d-flex align-items-center gap-1 mb-1">
-                      <span class="text-success small">
-                        <i class="fas fa-check-circle me-1"></i><?php
-                          if ($site['id'] === 'mastodon' && !empty($acc['api_secret'])) {
-                              echo clean($acc['api_secret']);
-                          } else {
-                              echo clean($acc['username']);
-                          }
-                        ?>
-                      </span>
-                      <button class="btn btn-xs btn-outline-secondary py-0 px-1"
-                              onclick='editCredForm(<?= json_encode($acc, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>, <?= json_encode($site['id']) ?>, <?= json_encode($site['name']) ?>, <?= (int)$selectedProjectId ?>)'
-                              title="Edit Credentials / Token / Password">
-                        <i class="fas fa-edit"></i>
-                      </button>
-                      <button class="btn btn-xs btn-outline-danger py-0 px-1"
-                              onclick="deleteAccount(<?= $acc['id'] ?>, this)"
-                              title="Remove">
-                        <i class="fas fa-times"></i>
-                      </button>
-                    </div>
-                    <?php endforeach; ?>
-                    <?php if ($site['id'] === 'wordpress'): ?>
-                      <button onclick="showWpConnect()" class="btn btn-xs btn-primary mt-1">
-                        <i class="fab fa-wordpress me-1"></i>Re-Connect WordPress
-                      </button>
-                    <?php else: ?>
-                    <button class="btn btn-xs btn-outline-primary mt-1"
-                            onclick="showCredForm('<?= $site['id'] ?>', '<?= $site['name'] ?>', <?= $selectedProjectId ?>)">
-                      <i class="fas fa-plus me-1"></i>Add More
-                    </button>
-                    <?php endif; ?>
-                  <?php else: ?>
-                    <?php if ($site['id'] === 'wordpress'): ?>
-                      <button onclick="showWpConnect()" class="btn btn-sm btn-primary">
-                        <i class="fab fa-wordpress me-1"></i>Connect WordPress
-                      </button>
-                      <br><small class="text-muted">Email + Password → Auto-save</small>
-                    <?php else: ?>
-                    <button class="btn btn-sm btn-outline-primary"
-                            onclick="showCredForm('<?= $site['id'] ?>', '<?= $site['name'] ?>', <?= $selectedProjectId ?>)">
-                      <i class="fas fa-key me-1"></i>Add Credentials
-                    </button>
-                    <?php endif; ?>
-                  <?php endif; ?>
-                <?php endif; ?>
-              </td>
-              <td>
-                <?php
-                $cooldown = checkPlatformCooldown($db, $selectedProjectId, $site['id'], $currentKeyword, $currentTargetSite, count($allAccounts));
-                
-                // Fetch the latest background queue task for this platform
-                $queueStmt = $db->prepare("SELECT status, error_message FROM backlink_queue WHERE project_id=? AND platform=? AND keyword=? AND target_url=? ORDER BY id DESC LIMIT 1");
-                $queueStmt->execute([$selectedProjectId, $site['id'], $currentKeyword, $currentTargetSite]);
-                $qItem = $queueStmt->fetch(PDO::FETCH_ASSOC);
-                ?>
-                <?php if ($cooldown['is_cooldown']): ?>
-                  <span class="badge bg-warning text-dark"><i class="fas fa-history me-1"></i>Posted (Cooldown)</span>
-                <?php elseif (isset($site['autopost']) && $site['autopost'] === false): ?>
-                  <span class="badge bg-secondary"><i class="fas fa-clock me-1"></i>Coming Soon</span>
-                <?php elseif ($qItem && $qItem['status'] === 'pending'): ?>
-                  <span class="badge bg-warning text-dark"><i class="fas fa-clock me-1"></i>⏳ Queued</span>
-                <?php elseif ($qItem && $qItem['status'] === 'processing'): ?>
-                  <span class="badge bg-info"><i class="fas fa-spinner fa-spin me-1"></i>⚙️ Posting...</span>
-                <?php elseif ($qItem && $qItem['status'] === 'failed'): ?>
-                  <span class="badge bg-danger text-white" style="cursor:help;" title="<?= htmlspecialchars($qItem['error_message'] ?? 'Unknown Error') ?>"><i class="fas fa-exclamation-triangle me-1"></i>❌ Failed</span>
-                <?php elseif ($saved): ?>
-                  <span class="badge bg-success">Ready to Post</span>
-                <?php else: ?>
-                  <span class="badge bg-secondary">Needs Credentials</span>
-                <?php endif; ?>
-              </td>
-              <td>
-                <?php if ($cooldown['is_cooldown']): ?>
-                  <span class="text-muted fw-bold"><i class="fas fa-clock me-1"></i>Wait <?= $cooldown['time_str'] ?></span>
-                <?php elseif (!empty($allAccounts) && (!isset($site['autopost']) || $site['autopost'] !== false)): ?>
-                  <button class="btn btn-sm btn-success"
-                          onclick="autoPostAll('<?= $site['id'] ?>', '<?= $site['name'] ?>', <?= $selectedProjectId ?>, <?= count($allAccounts) ?>)">
-                    <i class="fas fa-paper-plane me-1"></i>Auto Post
-                    <?php if (count($allAccounts) > 1): ?>
-                      <span class="badge bg-warning text-dark ms-1"><?= count($allAccounts) ?> accounts</span>
-                    <?php endif; ?>
-                  </button>
-                <?php elseif (isset($site['autopost']) && $site['autopost'] === false): ?>
-                  <span class="text-muted small">Coming Soon</span>
-                <?php else: ?>
-                  <span class="text-muted small">Add credentials first</span>
-                <?php endif; ?>
-              </td>
-            </tr>
-          <?php endforeach; ?>
-          </tbody>
-        </table>
-  </div>
-</div>
+  <?php else: ?>
+    <div class="alert alert-info">Please select a project to manage submissions.</div>
+  <?php endif; ?>
 
 <!-- Credentials Modal -->
 <div class="modal fade" id="credModal" tabindex="-1">
@@ -2244,6 +2287,52 @@ wordpress,myblog.wordpress.com,oauth_token_here</pre>
         <div class="spinner-border text-success mb-3" style="width:3rem;height:3rem;"></div>
         <h5 id="postingStatus">System is posting...</h5>
         <p class="text-muted" id="postingDetail">Please wait...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Failure Reason Modal -->
+<div class="modal fade" id="failureReasonModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">
+          <i class="fas fa-exclamation-triangle me-2"></i>Submission Failure Reason: <span id="failModalPlatform" class="fw-bold"></span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom flex-wrap gap-2">
+          <div>
+            <span class="badge bg-dark me-2 p-2" id="failModalAccount"></span>
+            <small class="text-muted" id="failModalTime"></small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('failModalRawError').textContent).then(()=>alert('Copied to clipboard!'))">
+            <i class="fas fa-copy me-1"></i>Copy Error
+          </button>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold text-dark"><i class="fas fa-bug me-1 text-danger"></i>Error Message / System Output:</label>
+          <pre id="failModalRawError" class="p-3 bg-dark text-light rounded small" style="max-height: 250px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; font-family: SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></pre>
+        </div>
+
+        <div class="alert alert-info border-info mb-0 d-flex align-items-start gap-2">
+          <i class="fas fa-lightbulb fa-lg text-info mt-1"></i>
+          <div>
+            <div class="fw-bold mb-1">Recommended Solution / Guidance:</div>
+            <div id="failModalAdvice" class="small"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer bg-light d-flex justify-content-between">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <div>
+          <button type="button" class="btn btn-success fw-bold shadow-sm" id="failModalRetryBtn">
+            <i class="fas fa-redo me-1"></i>Retry Auto Post Now
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -2406,7 +2495,9 @@ function showCredForm(platformId, platformName, projectId) {
   // Reset values
   if (usernameInput) usernameInput.value = '';
   if (passwordInput) passwordInput.value = '';
+  if (passwordInput) passwordInput.required = platformId === 'diigo';
   if (apiKeyInput) apiKeyInput.value = '';
+  if (apiKeyInput) apiKeyInput.required = ['diigo', 'devto'].includes(platformId);
   if (apiSecretInput) apiSecretInput.value = '';
   if (tumblrSecretInput) tumblrSecretInput.value = '';
 
@@ -2479,19 +2570,22 @@ function showCredForm(platformId, platformName, projectId) {
     'blogger':   'Get token: <a href="https://developers.google.com/oauthplayground" target="_blank">OAuth Playground</a> → Blogger scope → Access Token. Blog ID in API Secret.',
     'github':    'Get token: <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a> → Generate token → repo scope',
     'devto':     'Get key: <a href="https://dev.to/settings/extensions" target="_blank">dev.to/settings/extensions</a> → DEV Community API Keys → Generate',
-    'hashnode':  'Get key: <a href="https://hashnode.com/settings/developer" target="_blank">hashnode.com/settings/developer</a> → Personal Access Token. Publication ID in API Secret.',
+    'hashnode':  'Get key: <a href="https://hashnode.com/settings/developer" target="_blank">hashnode.com/settings/developer</a> → Personal Access Token. Blog must have <strong>Hashnode Pro</strong> (API is paid since May 2026). Publication ID optional.',
     'ghost':     'Ghost Admin → Settings → Integrations → Add Custom Integration → Admin API Key. Ghost site URL in Username.',
     'bluesky':   'No API key needed! Enter your Bluesky username + App Password (not your regular login password). Get App Password: <a href="https://bsky.app/settings/app-passwords" target="_blank">bsky.app → Settings → App Passwords</a>',
     'minds':     'Get token: <a href="https://www.minds.com/settings/security" target="_blank">minds.com → Settings → Security → API Token</a>',
     'plurk':     'Get key: <a href="https://www.plurk.com/API/Apps" target="_blank">plurk.com/API/Apps</a> → Create App → API Key',
+    'diigo':     'Create a Diigo API key at <a href="https://www.diigo.com/api_keys/new/" target="_blank">diigo.com/api_keys/new</a>. Enter your Diigo username and password as well.',
     'mediafire': '✅ No API key needed! Enter your MediaFire Email + Password. System will log in, generate a PDF with keyword description + backlink, and upload it automatically.',
+    'mewe': 'MeWe captcha scripted login pe aata hai. Captcha crack nahi hota. Session token se login skip hota hai: mewe.com pe logged-in Chrome → F12 → Network → koi mewe.com/api request → Request Headers se Cookie ya Authorization Bearer copy karke API Key field mein paste karo. Phir Auto Post captcha ke bina chalega.',
     'fourshared': '✅ No API key needed! Enter your 4Shared Email + Password. System will log in, generate a PDF with keyword description + backlink, and upload it automatically.',
+    'imgbb':     '✅ API Key required! Get free key: <a href="https://imgbb.com/api" target="_blank">imgbb.com/api</a> → Login → Get API Key. Paste it in API Key field. No password needed.',
   };
 
   // Platforms that need NO API key — ChatGPT content, copy-paste manually
   const noApiNeeded = ['pinterest','mastodon','minds','symbaloo','penzu','linktree',
-    'scoopit','wakelet','vivauae','padlet','pearltrees','mewe','instapaper',
-    'gifyu','postimage','photobucket','behance','pbase','dropbox','imgbb',
+    'scoopit','wakelet','vivauae','padlet','pearltrees','instapaper',
+    'gifyu','postimage','photobucket','behance','pbase','dropbox',
     'site123','posteezy','livejournal','justpaste','substack','dribbble',
     'limewire','workupload','powershow','uploadee','pdfhost',
     'mediafire','fourshared'];
@@ -2564,6 +2658,7 @@ function editCredForm(acc, platformId, platformName, projectId) {
   const passwordInput = document.getElementById('modalPasswordInput');
   if (passwordInput) {
     passwordInput.value = '';
+    passwordInput.required = false;
     passwordInput.placeholder = 'Enter new password / token (leave blank to keep current)';
   }
 
@@ -2926,8 +3021,12 @@ function submitHiddenForm(targetUrl, payload) {
   console.log('[SkyRank Bridge] Submitted payload via Form to target:', targetUrl);
 }
 
-function autoPost(platformId, platformName, projectId) {
-  autoPostAll(platformId, platformName, projectId);
+function autoPost(platformId, platformName, projectId, accountId) {
+  if (platformId === 'pinterest') {
+    runLocalAgentPost(platformId, platformName, projectId);
+    return;
+  }
+  runServerAutoPostAll(platformId, platformName, projectId, accountId);
 }
 
 function autoPostAll(platformId, platformName, projectId) {
@@ -2938,25 +3037,31 @@ function autoPostAll(platformId, platformName, projectId) {
   runServerAutoPostAll(platformId, platformName, projectId);
 }
 
-function runServerAutoPostAll(platformId, platformName, projectId) {
+function runServerAutoPostAll(platformId, platformName, projectId, accountId) {
   const modal = new bootstrap.Modal(document.getElementById('postModal'));
   document.getElementById('postingStatus').textContent = 'Posting to ' + platformName + '...';
-  document.getElementById('postingDetail').textContent = 'Posting to all accounts simultaneously...';
+  document.getElementById('postingDetail').textContent = accountId ? 'Posting using selected account...' : 'Posting to all accounts simultaneously...';
   modal.show();
 
   const kwSelect = document.getElementById('backlinkKeywordSelect');
   const kw = kwSelect ? encodeURIComponent(kwSelect.value) : '';
   const siteSelect = document.getElementById('backlinkUrlSelect');
   const siteUrl = siteSelect ? encodeURIComponent(siteSelect.value) : '';
-  fetch('auto-post-all.php?id=' + projectId + '&platform=' + platformId + '&keyword=' + kw + '&target_site=' + siteUrl, {
+  let postUrl = 'auto-post-all.php?id=' + projectId + '&platform=' + platformId + '&keyword=' + kw + '&target_site=' + siteUrl;
+  if (accountId) {
+    postUrl += '&account_id=' + encodeURIComponent(accountId);
+  }
+  fetch(postUrl, {
     signal: AbortSignal.timeout(300000),
     credentials: 'same-origin',
     headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }
   })
     .then(r => r.text())
     .then(text => {
-      try { return JSON.parse(text); }
-      catch (err) {
+      try {
+        const idx = text.indexOf('{');
+        return JSON.parse(idx !== -1 ? text.slice(idx) : text);
+      } catch (err) {
         const preview = text.replace(/<[^>]*>/g, ' ').trim().slice(0, 300);
         throw new Error('Server error: ' + preview);
       }
@@ -3370,9 +3475,198 @@ document.addEventListener("DOMContentLoaded", () => {
   // Load saved platform selections, keyword, and URL for this project
   restoreSavedKeywordAndUrl();
   loadSavedPlatformsSelection();
+  initPlatformsPagination(1);
+  initBacklinksPagination(1);
+  initQuickStatusPagination(1);
   refreshBacklinkTables();
   setInterval(refreshBacklinkTables, 8000);
 });
+
+let currentPlatformsPage = 1;
+const PLATFORMS_PER_PAGE = 10;
+
+function initPlatformsPagination(page) {
+  if (page !== undefined) currentPlatformsPage = page;
+  const rows = Array.from(document.querySelectorAll('#primaryConsoleCard tbody tr.platform-row'));
+  if (rows.length === 0) return;
+
+  const searchInput = document.getElementById('platformSearchInput');
+  const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+  let visibleRows = rows;
+  if (query) {
+    visibleRows = rows.filter(r => {
+      const name = (r.getAttribute('data-platform-name') || '').toLowerCase();
+      const id = (r.getAttribute('data-platform-id') || '').toLowerCase();
+      return name.includes(query) || id.includes(query);
+    });
+  }
+
+  const total = visibleRows.length;
+  const totalPages = Math.ceil(total / PLATFORMS_PER_PAGE) || 1;
+  if (currentPlatformsPage > totalPages) currentPlatformsPage = totalPages;
+  if (currentPlatformsPage < 1) currentPlatformsPage = 1;
+
+  rows.forEach(r => r.style.display = 'none');
+
+  const start = (currentPlatformsPage - 1) * PLATFORMS_PER_PAGE;
+  const end = Math.min(start + PLATFORMS_PER_PAGE, total);
+  for (let i = start; i < end; i++) {
+    if (visibleRows[i]) visibleRows[i].style.display = '';
+  }
+
+  const infoEl = document.getElementById('platformsPaginationInfo');
+  if (infoEl) {
+    infoEl.textContent = total === 0 ? 'No matching platforms found' : `Showing ${start + 1} to ${end} of ${total} platforms`;
+  }
+
+  const pagEl = document.getElementById('platformsPagination');
+  if (pagEl) {
+    if (totalPages <= 1) {
+      pagEl.innerHTML = '';
+      return;
+    }
+    let html = '';
+    html += `<li class="page-item ${currentPlatformsPage === 1 ? 'disabled' : ''}">
+      <a class="page-link" href="javascript:void(0)" onclick="initPlatformsPagination(${currentPlatformsPage - 1})" aria-label="Previous">&laquo;</a>
+    </li>`;
+    for (let p = 1; p <= totalPages; p++) {
+      html += `<li class="page-item ${p === currentPlatformsPage ? 'active' : ''}">
+        <a class="page-link" href="javascript:void(0)" onclick="initPlatformsPagination(${p})">${p}</a>
+      </li>`;
+    }
+    html += `<li class="page-item ${currentPlatformsPage === totalPages ? 'disabled' : ''}">
+      <a class="page-link" href="javascript:void(0)" onclick="initPlatformsPagination(${currentPlatformsPage + 1})" aria-label="Next">&raquo;</a>
+    </li>`;
+    pagEl.innerHTML = html;
+  }
+}
+
+function filterPlatforms(query) {
+  currentPlatformsPage = 1;
+  initPlatformsPagination();
+}
+
+let currentBacklinksPage = 1;
+const BACKLINKS_PER_PAGE = 10;
+
+function initBacklinksPagination(page) {
+  if (page !== undefined) currentBacklinksPage = page;
+  const rows = Array.from(document.querySelectorAll('#createdBacklinksSection tbody tr.bl-row'));
+  if (rows.length === 0) return;
+
+  const total = rows.length;
+  const totalPages = Math.ceil(total / BACKLINKS_PER_PAGE) || 1;
+  if (currentBacklinksPage > totalPages) currentBacklinksPage = totalPages;
+  if (currentBacklinksPage < 1) currentBacklinksPage = 1;
+
+  rows.forEach(r => r.style.display = 'none');
+
+  const start = (currentBacklinksPage - 1) * BACKLINKS_PER_PAGE;
+  const end = Math.min(start + BACKLINKS_PER_PAGE, total);
+  for (let i = start; i < end; i++) {
+    if (rows[i]) rows[i].style.display = '';
+  }
+
+  const infoEl = document.getElementById('backlinksPaginationInfo');
+  if (infoEl) {
+    infoEl.textContent = `Showing ${start + 1} to ${end} of ${total} Created Backlinks`;
+  }
+
+  const pagEl = document.getElementById('backlinksPagination');
+  if (pagEl) {
+    if (totalPages <= 1) {
+      pagEl.innerHTML = '';
+      return;
+    }
+    let html = '';
+    html += `<li class="page-item ${currentBacklinksPage === 1 ? 'disabled' : ''}">
+      <a class="page-link" href="javascript:void(0)" onclick="initBacklinksPagination(${currentBacklinksPage - 1})" aria-label="Previous">&laquo;</a>
+    </li>`;
+    for (let p = 1; p <= totalPages; p++) {
+      html += `<li class="page-item ${p === currentBacklinksPage ? 'active' : ''}">
+        <a class="page-link" href="javascript:void(0)" onclick="initBacklinksPagination(${p})">${p}</a>
+      </li>`;
+    }
+    html += `<li class="page-item ${currentBacklinksPage === totalPages ? 'disabled' : ''}">
+      <a class="page-link" href="javascript:void(0)" onclick="initBacklinksPagination(${currentBacklinksPage + 1})" aria-label="Next">&raquo;</a>
+    </li>`;
+    pagEl.innerHTML = html;
+  }
+}
+
+let currentQuickStatusPage = 1;
+const QUICK_CARDS_PER_PAGE = 12;
+
+function initQuickStatusPagination(page) {
+  if (page !== undefined) currentQuickStatusPage = page;
+  const cards = Array.from(document.querySelectorAll('#quickStatusGridContainer .quick-card'));
+  if (cards.length === 0) return;
+
+  const total = cards.length;
+  const totalPages = Math.ceil(total / QUICK_CARDS_PER_PAGE) || 1;
+  if (currentQuickStatusPage > totalPages) currentQuickStatusPage = totalPages;
+  if (currentQuickStatusPage < 1) currentQuickStatusPage = 1;
+
+  cards.forEach(c => c.style.display = 'none');
+
+  const start = (currentQuickStatusPage - 1) * QUICK_CARDS_PER_PAGE;
+  const end = Math.min(start + QUICK_CARDS_PER_PAGE, total);
+  for (let i = start; i < end; i++) {
+    if (cards[i]) cards[i].style.display = '';
+  }
+
+  // Update top header indicator & button disabled state
+  const indicator = document.getElementById('quickPageIndicator');
+  if (indicator) {
+    indicator.textContent = `Page ${currentQuickStatusPage}/${totalPages}`;
+  }
+  const prevBtn = document.getElementById('quickPrevBtn');
+  if (prevBtn) {
+    prevBtn.disabled = (currentQuickStatusPage <= 1);
+    prevBtn.classList.toggle('disabled', currentQuickStatusPage <= 1);
+  }
+  const nextBtn = document.getElementById('quickNextBtn');
+  if (nextBtn) {
+    nextBtn.disabled = (currentQuickStatusPage >= totalPages);
+    nextBtn.classList.toggle('disabled', currentQuickStatusPage >= totalPages);
+  }
+
+  // Update footer info text
+  const info = document.getElementById('quickPaginationInfo');
+  if (info) {
+    info.textContent = `Showing ${total === 0 ? 0 : start + 1} to ${end} of ${total} platforms`;
+  }
+
+  // Render footer pagination links
+  const pagList = document.getElementById('quickPaginationList');
+  if (pagList) {
+    let html = '';
+    html += `<li class="page-item ${currentQuickStatusPage <= 1 ? 'disabled' : ''}">
+      <a class="page-link py-1 px-2" href="javascript:void(0)" onclick="changeQuickPage(-1)">&laquo; Prev</a>
+    </li>`;
+
+    for (let p = 1; p <= totalPages; p++) {
+      html += `<li class="page-item ${p === currentQuickStatusPage ? 'active' : ''}">
+        <a class="page-link py-1 px-2" href="javascript:void(0)" onclick="initQuickStatusPagination(${p})">${p}</a>
+      </li>`;
+    }
+
+    html += `<li class="page-item ${currentQuickStatusPage >= totalPages ? 'disabled' : ''}">
+      <a class="page-link py-1 px-2" href="javascript:void(0)" onclick="changeQuickPage(1)">Next &raquo;</a>
+    </li>`;
+    pagList.innerHTML = html;
+  }
+}
+
+function changeQuickPage(dir) {
+  const cards = Array.from(document.querySelectorAll('#quickStatusGridContainer .quick-card'));
+  const totalPages = Math.ceil(cards.length / QUICK_CARDS_PER_PAGE) || 1;
+  let target = currentQuickStatusPage + dir;
+  if (target < 1) target = 1;
+  if (target > totalPages) target = totalPages;
+  initQuickStatusPagination(target);
+}
 
 function refreshBacklinkTables() {
   const kwSelect = document.getElementById('backlinkKeywordSelect');
@@ -3381,7 +3675,7 @@ function refreshBacklinkTables() {
   const siteUrl = siteSelect ? encodeURIComponent(siteSelect.value) : '';
 
   const gridSec = document.getElementById('quickStatusGridContainer');
-  if (gridSec) gridSec.style.opacity = '0.6';
+  if (gridSec) gridSec.style.opacity = '0.7';
 
   fetch('submission-manager.php?action=fetch_backlinks_html&project_id=' + PROJECT_ID + '&keyword=' + kw + '&target_site=' + siteUrl, {
     headers: { 'X-Requested-With': 'XMLHttpRequest' }
@@ -3393,17 +3687,30 @@ function refreshBacklinkTables() {
       const blSec = document.getElementById('createdBacklinksSection');
       if (blSec && data.createdHtml !== undefined) {
         blSec.innerHTML = data.createdHtml;
+        initBacklinksPagination();
       }
       const pendingSec = document.getElementById('pendingTasksSection');
       if (pendingSec && data.pendingHtml !== undefined) {
         pendingSec.innerHTML = data.pendingHtml;
       }
+      const failSec = document.getElementById('failedTasksSection');
+      if (failSec) {
+        failSec.innerHTML = '';
+      }
+      if (data.pendingCount > 0 && !window.workerRunning) {
+        window.workerRunning = true;
+        fetch('cron_worker.php')
+          .then(() => { window.workerRunning = false; })
+          .catch(() => { window.workerRunning = false; });
+      }
       if (gridSec && data.quickStatusHtml !== undefined) {
         gridSec.innerHTML = data.quickStatusHtml;
+        initQuickStatusPagination();
       }
       const primConsoleSec = document.getElementById('primaryConsoleContainer');
       if (primConsoleSec && data.primaryConsoleHtml !== undefined) {
         primConsoleSec.innerHTML = data.primaryConsoleHtml;
+        initPlatformsPagination();
       }
       loadSavedPlatformsSelection();
     }
@@ -3412,6 +3719,79 @@ function refreshBacklinkTables() {
     if (gridSec) gridSec.style.opacity = '1';
     console.error('Error refreshing backlinks:', e);
   });
+}
+
+function showFailureReasonModal(platformName, accountName, errorMessage, failedAt, platformId, accountId) {
+  const modalEl = document.getElementById('failureReasonModal');
+  if (!modalEl) {
+    alert("Failure Reason (" + platformName + "):\n" + (errorMessage || 'Unknown'));
+    return;
+  }
+
+  document.getElementById('failModalPlatform').textContent = platformName || 'Platform';
+  document.getElementById('failModalAccount').textContent = accountName ? ('Account: ' + accountName) : 'Default Account';
+  document.getElementById('failModalTime').textContent = failedAt ? ('Failed: ' + failedAt) : '';
+  document.getElementById('failModalRawError').textContent = errorMessage || 'No error details recorded by system.';
+
+  // Smart solution guidance
+  let advice = "Check account credentials and ensure the target platform account is active and verified.";
+  const err = (errorMessage || '').toLowerCase();
+  if (err.includes('playwright') || err.includes('no module named')) {
+    advice = "💡 <strong>Automation Engine Switch Applied:</strong> System previously tried Playwright which was not installed. The engine has now been switched to pure Selenium Chrome WebDriver. Click <strong>'Retry Auto Post Now'</strong> below to execute via Selenium.";
+  } else if (err.includes('401') || err.includes('unauthorized') || err.includes('forbidden')) {
+    advice = "💡 <strong>Invalid Credentials / API Key (401 Unauthorized):</strong> The platform rejected your login credentials or API token. Click the <strong>Edit (pencil)</strong> button next to this account to update with a valid token or password.";
+  } else if (err.includes('tilesearchinput') || err.includes('empty cells') || err.includes('multiple empty cells')) {
+    advice = "💡 <strong>Symbaloo Tour / Modal Overlay:</strong> Symbaloo ke homepage par 'Welcome to Symbaloo / Skip Tour' onboarding popup open ho gaya tha jisse tile input open nahi ho paaya. Humne automatic overlay bypass & double-click fix add kar diya hai. Ab <strong>'Retry Auto Post Now'</strong> par click karein.";
+  } else if (err.includes('email input not found') || err.includes('login page')) {
+    advice = "💡 <strong>Symbaloo Login Form Loading:</strong> Symbaloo ki JavaScript SPA app login fields mount karne se pehle render nahi ho paayi thi. Humne dynamic Elm app bootstrap aur standard page load strategy add kar di hai. Ab <strong>'Retry Auto Post Now'</strong> par click karein.";
+  } else if (err.includes('image')) {
+    advice = "💡 <strong>Post Image Missing:</strong> This platform requires an uploaded image or poster. Upload a photo or generate a poster in the Post Image section above, then retry.";
+  }
+  document.getElementById('failModalAdvice').innerHTML = advice;
+
+  const retryBtn = document.getElementById('failModalRetryBtn');
+  if (retryBtn) {
+    if (platformId) {
+      retryBtn.style.display = 'inline-block';
+      retryBtn.onclick = function() {
+        const bsModal = bootstrap.Modal.getInstance(modalEl);
+        if (bsModal) bsModal.hide();
+        if (accountId) {
+          autoPost(platformId, platformName, PROJECT_ID, accountId);
+        } else {
+          autoPostAll(platformId, platformName, PROJECT_ID);
+        }
+      };
+    } else {
+      retryBtn.style.display = 'none';
+    }
+  }
+
+  const modal = new bootstrap.Modal(modalEl);
+  modal.show();
+}
+
+function runWorkerNow(btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Processing...';
+  }
+  fetch('cron_worker.php')
+    .then(r => r.text())
+    .then(() => {
+      refreshBacklinkTables();
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-check me-1"></i>Done';
+        setTimeout(() => { btn.innerHTML = '<i class="fas fa-play me-1"></i>Process Queue Now'; }, 3000);
+      }
+    })
+    .catch(() => {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-play me-1"></i>Process Queue Now';
+      }
+    });
 }
 
 function restoreSavedKeywordAndUrl() {
@@ -3456,7 +3836,23 @@ function toggleSelectAllPlatforms(masterCb) {
   updateSelectedPlatformsCount();
 }
 
+function selectFreePlatforms() {
+  const checkboxes = document.querySelectorAll('.platform-select-checkbox');
+  checkboxes.forEach(cb => {
+    cb.checked = cb.getAttribute('data-free') === '1';
+  });
+  const master = document.getElementById('selectAllPlatformsCheckbox');
+  if (master) master.checked = false;
+  updateSelectedPlatformsCount();
+}
+
 function loadSavedPlatformsSelection() {
+  const appliedFree = localStorage.getItem('seo_free_platforms_applied_' + PROJECT_ID);
+  if (!appliedFree) {
+    selectFreePlatforms();
+    localStorage.setItem('seo_free_platforms_applied_' + PROJECT_ID, '1');
+    return;
+  }
   const saved = localStorage.getItem('seo_selected_platforms_' + PROJECT_ID);
   if (saved) {
     try {
@@ -3469,6 +3865,8 @@ function loadSavedPlatformsSelection() {
       });
       updateSelectedPlatformsCount();
     } catch(e) {}
+  } else {
+    selectFreePlatforms();
   }
 }
 
@@ -3495,7 +3893,15 @@ function runSelectedPlatforms(projectId) {
     credentials: 'same-origin',
     headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }
   })
-  .then(r => r.json())
+  .then(r => r.text())
+  .then(text => {
+    try {
+      const idx = text.indexOf('{');
+      return JSON.parse(idx !== -1 ? text.slice(idx) : text);
+    } catch(e) {
+      throw new Error(text.replace(/<[^>]*>/g, ' ').trim().slice(0, 200));
+    }
+  })
   .then(data => {
     const queued = data.queued || 0;
     document.getElementById('postingStatus').innerHTML =

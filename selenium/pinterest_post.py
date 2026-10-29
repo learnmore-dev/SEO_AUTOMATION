@@ -55,6 +55,11 @@ def get_driver(email="default", proxy=None):
                     break
         if chrome_bin:
             opts.binary_location = chrome_bin
+    else:
+        # Windows — also run headless
+        opts.add_argument('--headless=new')
+        opts.add_argument('--disable-gpu')
+        opts.add_argument('--disable-software-rasterizer')
 
     # Chrome launch flags optimized for Linux EC2 stability with strict RAM limits
     opts.add_argument('--no-sandbox')
@@ -462,6 +467,57 @@ def pinterest_post(email, password, keyword, target_site, image_path=None, ai_ti
     wait = WebDriverWait(driver, 25)
 
     try:
+        # ── Inject saved cookies to bypass CAPTCHA/login ──
+        cookies_file = os.path.join(script_dir, 'pinterest_cookies.json')
+        if os.path.exists(cookies_file):
+            log("Found saved cookies — injecting to bypass login CAPTCHA...")
+            try:
+                # First navigate to pinterest domain so cookies can be set
+                driver.get("https://www.pinterest.com/")
+                time.sleep(2)
+                with open(cookies_file, 'r') as f:
+                    saved_cookies = json.load(f)
+                for cookie in saved_cookies:
+                    c = {
+                        'name': cookie['name'],
+                        'value': cookie['value'],
+                        'path': cookie.get('path', '/'),
+                        'secure': cookie.get('secure', True),
+                    }
+                    domain = cookie.get('domain', '.pinterest.com')
+                    if not cookie.get('hostOnly', False):
+                        c['domain'] = domain
+                    if cookie.get('expirationDate'):
+                        c['expiry'] = int(cookie['expirationDate'])
+                    try:
+                        driver.add_cookie(c)
+                    except Exception as ce:
+                        pass
+                log("Cookies injected! Navigating to pin-builder...")
+                # Use ?source=pin_builder to avoid business/ad account redirect
+                driver.get("https://www.pinterest.com/pin-builder/?source=pin_builder")
+                time.sleep(5)
+                # If redirected to business/ad page, close any popup and go back
+                curr = driver.current_url.lower()
+                if "ads" in curr or "business" in curr:
+                    log("Redirected to business page — trying personal pin builder...")
+                    driver.get("https://in.pinterest.com/pin-builder/")
+                    time.sleep(4)
+                # Close any business/profile dropdown that may have opened
+                try:
+                    driver.execute_script("""
+                        // Close any open dropdown/modal that is not the pin builder
+                        document.querySelectorAll('[role="dialog"],[role="menu"]').forEach(function(el) {
+                            var txt = (el.innerText || '');
+                            if (txt.includes('Ad accounts') || txt.includes('Businesses')) {
+                                el.remove();
+                            }
+                        });
+                    """)
+                except: pass
+            except Exception as cookie_err:
+                log(f"Cookie inject error: {cookie_err} — falling back to normal login...")
+
         log("Opening Pinterest...")
         if not safe_get(driver, "https://www.pinterest.com/pin-builder/"):
             log("Initial pin-builder navigation returned error — retrying main page...")
@@ -926,6 +982,20 @@ def pinterest_post(email, password, keyword, target_site, image_path=None, ai_ti
             if board_selected:
                 time.sleep(2)
                 log("Board selected via JS synthetic mouse events!")
+                # Verify board was actually selected (dropdown should show board name now)
+                board_name_shown = driver.execute_script("""
+                    var btn = document.querySelector("[data-test-id='board-dropdown-select-button']");
+                    if (btn) {
+                        var t = (btn.innerText || btn.textContent || '').trim();
+                        return t && t.toLowerCase() !== 'select' ? t : null;
+                    }
+                    return null;
+                """)
+                if board_name_shown:
+                    log(f"Board confirmed selected: '{board_name_shown}'")
+                else:
+                    log("Board selection not confirmed — retrying with direct click...")
+                    board_selected = False
             else:
                 log("No existing board clicked — checking python rows...")
                 rows = driver.find_elements(By.CSS_SELECTOR, "[data-test-id='boardWithoutSection'], [data-test-id='board-row'], div[role='option']")
@@ -940,90 +1010,116 @@ def pinterest_post(email, password, keyword, target_site, image_path=None, ai_ti
                             break
 
             if not board_selected:
-                log("No existing boards — creating new...")
-
-                # Click create board
-                cb = wait.until(EC.element_to_be_clickable(
-                    (By.CSS_SELECTOR, "[data-test-id='create-board-button']")))
-                js_click(driver, cb)
-                time.sleep(3)
-                log("Create board modal opened")
-
-                board_name = f"{keyword.title()} Training"
-                board_name_set = False
-
-                SKIP_IDS = {
-                    'search-input', 'WebsiteField',
-                    'storyboard-selector-title',
-                    'combobox-storyboard-interest-tags',
-                }
-
-                all_inputs = driver.find_elements(By.TAG_NAME, "input")
-
-                for inp in all_inputs:
-                    try:
-                        inp_id   = inp.get_attribute('id') or ''
-                        inp_ph   = inp.get_attribute('placeholder') or ''
-                        inp_type = inp.get_attribute('type') or 'text'
-                        if inp_type in ('file', 'checkbox', 'hidden', 'url'):
-                            continue
-                        if inp_id in SKIP_IDS:
-                            continue
-                        if 'search' in inp_id.lower() or 'search' in inp_ph.lower():
-                            continue
-                        if not inp.is_displayed():
-                            continue
-
-                        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
-                        time.sleep(0.3)
-                        ActionChains(driver).move_to_element(inp).click().perform()
-                        time.sleep(0.3)
-                        inp.send_keys(board_name)
-                        time.sleep(0.4)
-                        actual = inp.get_attribute('value') or ''
-                        if actual:
-                            board_name_set = True
-                            break
-                        else:
-                            js_set_value(driver, inp, board_name)
-                            time.sleep(0.3)
-                            actual2 = inp.get_attribute('value') or ''
-                            if actual2:
-                                board_name_set = True
-                                break
-                    except Exception as e:
-                        log(f"  input try: {e}")
-
-                if not board_name_set:
-                    try:
-                        driver.execute_script(
-                            "document.querySelector('[data-test-id=\"board-form-container\"]').querySelector('input').focus();"
-                        )
-                        time.sleep(0.3)
-                        driver.switch_to.active_element.send_keys(board_name)
-                        time.sleep(0.3)
-                        board_name_set = True
-                    except Exception as e:
-                        log(f"Active element: {e}")
-
-                time.sleep(1)
-
+                log("No existing boards — creating new board directly...")
                 try:
-                    sbmt = wait.until(EC.element_to_be_clickable(
-                        (By.CSS_SELECTOR, "[data-test-id='board-form-submit-button']")))
-                    js_click(driver, sbmt)
-                    time.sleep(5)
-                    log("Board created via board-form-submit-button!")
-                    board_selected = True
-                except Exception as e:
-                    log(f"board-form-submit: {e}")
-                    for btn in driver.find_elements(By.TAG_NAME, "button"):
-                        if btn.text.strip() in ("Create", "Create board") and btn.is_displayed():
-                            js_click(driver, btn)
-                            time.sleep(5)
-                            log(f"Board created via '{btn.text}' btn!")
-                            board_selected = True
+                    # First close any stray popups/dropdowns
+                    try:
+                        driver.execute_script("""
+                            document.querySelectorAll('[role="dialog"],[role="menu"]').forEach(function(el) {
+                                var txt = (el.innerText || '');
+                                if (txt.includes('Ad accounts') || txt.includes('Businesses') || txt.includes('Assets')) {
+                                    el.remove();
+                                }
+                            });
+                        """)
+                        time.sleep(0.5)
+                    except: pass
+
+                    # Re-open board dropdown first
+                    for sel in ["[data-test-id='board-dropdown-select-button']"]:
+                        elems = driver.find_elements(By.CSS_SELECTOR, sel)
+                        if elems and elems[0].is_displayed():
+                            js_click(driver, elems[0])
+                            time.sleep(2)
+                            log("Re-opened board dropdown for Create board")
                             break
+
+                    # Now click Create board
+                    create_clicked = False
+                    cb_elems = driver.find_elements(By.CSS_SELECTOR, "[data-test-id='create-board-button']")
+                    if cb_elems and cb_elems[0].is_displayed():
+                        js_click(driver, cb_elems[0])
+                        create_clicked = True
+                        log("Clicked Create board option via data-test-id")
+                        time.sleep(3)
+
+                    if not create_clicked:
+                        # Find by text — look inside the dropdown only
+                        for el in driver.find_elements(By.XPATH, "//*[normalize-space(text())='Create board']"):
+                            if el.is_displayed():
+                                js_click(driver, el)
+                                create_clicked = True
+                                log("Clicked Create board via text")
+                                time.sleep(3)
+                                break
+
+                    # Screenshot
+                    try:
+                        driver.save_screenshot(os.path.join(script_dir, 'pinterest_board_create.png'))
+                    except: pass
+
+                    # Type board name
+                    board_name = f"{keyword.title()} Pins"
+                    time.sleep(1)
+
+                    board_input = None
+                    for inp in driver.find_elements(By.TAG_NAME, "input"):
+                        try:
+                            inp_id = inp.get_attribute('id') or ''
+                            inp_type = inp.get_attribute('type') or 'text'
+                            inp_ph = inp.get_attribute('placeholder') or ''
+                            if inp_type in ('file', 'checkbox', 'hidden'):
+                                continue
+                            if 'search' in inp_id.lower() or 'search' in inp_ph.lower():
+                                continue
+                            if inp.is_displayed():
+                                board_input = inp
+                                break
+                        except: pass
+
+                    if board_input:
+                        driver.execute_script("arguments[0].focus();", board_input)
+                        time.sleep(0.3)
+                        board_input.clear()
+                        board_input.send_keys(board_name)
+                        time.sleep(0.5)
+                        log(f"Board name typed: {board_name}")
+                    else:
+                        log("Board name input not found — trying active element")
+                        try:
+                            driver.switch_to.active_element.send_keys(board_name)
+                        except: pass
+
+                    time.sleep(1)
+
+                    # Submit
+                    submit_done = False
+                    for sel in ["[data-test-id='board-form-submit-button']"]:
+                        elems = driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in elems:
+                            if el.is_displayed():
+                                js_click(driver, el)
+                                time.sleep(5)
+                                log("Board created via submit button!")
+                                board_selected = True
+                                submit_done = True
+                                break
+                        if submit_done: break
+
+                    if not submit_done:
+                        for btn in driver.find_elements(By.TAG_NAME, "button"):
+                            try:
+                                txt = btn.text.strip()
+                                if txt in ("Create", "Create board", "Done") and btn.is_displayed():
+                                    js_click(driver, btn)
+                                    time.sleep(5)
+                                    log(f"Board created via '{txt}' btn!")
+                                    board_selected = True
+                                    break
+                            except: pass
+
+                except Exception as e_create:
+                    log(f"Board create error: {e_create}")
 
         except Exception as e:
             log(f"Board section: {e}")
@@ -1149,7 +1245,8 @@ def pinterest_post(email, password, keyword, target_site, image_path=None, ai_ti
         if not pin_url_found:
             log("Pin toast URL not found in 20s — navigating to profile created pins to fetch newly published Pin URL...")
             try:
-                driver.get("https://www.pinterest.com/me/")
+                # Try /created pins page first (most reliable)
+                driver.get("https://www.pinterest.com/learnmore/")
                 time.sleep(4)
                 profile_link = driver.execute_script("""
                     var elems = Array.from(document.querySelectorAll("a[href*='/pin/']"));

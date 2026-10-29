@@ -22,6 +22,8 @@ function seoCfg(string $key, $default = '') {
     return $_seoLocal[$key] ?? $default;
 }
 
+define('DB_TYPE', (string) seoCfg('DB_TYPE', 'sqlite'));
+define('DB_SQLITE_PATH', (string) seoCfg('DB_SQLITE_PATH', __DIR__ . '/database.sqlite'));
 define('DB_HOST', (string) seoCfg('DB_HOST', '127.0.0.1:3306'));
 define('DB_USER', (string) seoCfg('DB_USER', 'root'));
 define('DB_PASS', (string) seoCfg('DB_PASS', ''));
@@ -57,6 +59,8 @@ define('OPENAI_IMAGE_SIZE',    (string) seoCfg('OPENAI_IMAGE_SIZE', '1024x1024')
 define('GEMINI_API_KEY',       (string) seoCfg('GEMINI_API_KEY', ''));
 define('DEEPSEEK_API_KEY',     (string) seoCfg('DEEPSEEK_API_KEY', ''));
 define('DEEPSEEK_MODEL',       (string) seoCfg('DEEPSEEK_MODEL', 'deepseek-chat'));
+define('GROQ_API_KEY',         (string) seoCfg('GROQ_API_KEY', ''));
+define('GROQ_MODEL',           (string) seoCfg('GROQ_MODEL', 'qwen/qwen3.8-27b'));
 define('PRIMARY_AI_PROVIDER',  (string) seoCfg('PRIMARY_AI_PROVIDER', 'auto'));
 define('STABILITY_API_KEY',    (string) seoCfg('STABILITY_API_KEY', ''));
 define('HUGGINGFACE_API_KEY',  (string) seoCfg('HUGGINGFACE_API_KEY', ''));
@@ -89,39 +93,229 @@ foreach (['uploads', 'assets', 'logs'] as $_dir) {
     }
 }
 
+function initSqliteDatabase(PDO $pdo, string $superUser = 'admin', string $superPass = 'admin123', string $superEmail = 'admin@skyrank.com'): void {
+    $schema = "
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      role TEXT DEFAULT 'admin',
+      api_key TEXT DEFAULT NULL,
+      allowed_menus TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      website_url TEXT NOT NULL,
+      target_keyword TEXT NOT NULL,
+      target_site TEXT DEFAULT NULL,
+      package_type TEXT DEFAULT 'basic',
+      business_name TEXT DEFAULT '',
+      business_address TEXT DEFAULT NULL,
+      business_hours TEXT DEFAULT NULL,
+      business_desc TEXT DEFAULT NULL,
+      contact_name TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      email TEXT DEFAULT '',
+      gsc_access TEXT DEFAULT NULL,
+      ga_access TEXT DEFAULT NULL,
+      google_ads_id TEXT DEFAULT NULL,
+      admin_url TEXT DEFAULT '',
+      admin_user TEXT DEFAULT '',
+      admin_pass TEXT DEFAULT NULL,
+      competitor_sites TEXT DEFAULT NULL,
+      post_image TEXT DEFAULT NULL,
+      seo_score INTEGER DEFAULT NULL,
+      pagespeed_score INTEGER DEFAULT NULL,
+      pagespeed_mobile_score INTEGER DEFAULT NULL,
+      pagespeed_desktop_score INTEGER DEFAULT NULL,
+      pagespeed_metrics_json TEXT DEFAULT NULL,
+      pagespeed_checked_at DATETIME DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS social_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL DEFAULT 0,
+      platform TEXT NOT NULL,
+      username TEXT NOT NULL,
+      password TEXT DEFAULT NULL,
+      api_key TEXT DEFAULT NULL,
+      api_secret TEXT DEFAULT NULL,
+      refresh_token TEXT DEFAULT NULL,
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS backlinks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      backlink_url TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      da_score INTEGER DEFAULT 70,
+      status TEXT DEFAULT 'created',
+      verified_status TEXT DEFAULT 'unverified',
+      last_checked_at DATETIME DEFAULT NULL,
+      post_title TEXT DEFAULT NULL,
+      keyword TEXT DEFAULT NULL,
+      target_url TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS backlink_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      social_account_id INTEGER DEFAULT 0,
+      platform TEXT NOT NULL,
+      keyword TEXT DEFAULT NULL,
+      target_url TEXT DEFAULT NULL,
+      post_image TEXT DEFAULT NULL,
+      status TEXT DEFAULT 'pending',
+      published_url TEXT DEFAULT NULL,
+      error_message TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS keywords (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      keyword TEXT NOT NULL,
+      volume INTEGER DEFAULT 0,
+      cpc REAL DEFAULT 0.00,
+      competition REAL DEFAULT 0.00,
+      seo_difficulty INTEGER DEFAULT NULL,
+      score INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'Pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS seo_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      rank INTEGER DEFAULT 0,
+      seo_score INTEGER DEFAULT 0,
+      report_date DATE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS project_meta (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL UNIQUE,
+      meta_title TEXT DEFAULT NULL,
+      meta_description TEXT DEFAULT NULL,
+      meta_keywords TEXT DEFAULT NULL,
+      og_title TEXT DEFAULT NULL,
+      og_description TEXT DEFAULT NULL,
+      og_image TEXT DEFAULT NULL,
+      h1_suggestion TEXT DEFAULT NULL,
+      schema_json TEXT DEFAULT NULL,
+      full_head_html TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS content_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      article TEXT NOT NULL,
+      status TEXT DEFAULT 'draft',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS onpage_issues (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      detail TEXT NOT NULL,
+      severity TEXT DEFAULT 'medium',
+      fix TEXT DEFAULT NULL,
+      status TEXT DEFAULT 'open',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS keyword_rankings_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      keyword TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS broken_internal_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      source_url TEXT NOT NULL,
+      broken_url TEXT NOT NULL,
+      status_code INTEGER NOT NULL,
+      found_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    ";
+    $pdo->exec($schema);
+
+    // Create default superuser if users table is empty
+    $count = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+    if ($count === 0) {
+        $hash = password_hash($superPass, PASSWORD_BCRYPT);
+        $apiKey = 'sky_' . bin2hex(random_bytes(16));
+        $stmt = $pdo->prepare("INSERT INTO users (username, password, email, role, api_key) VALUES (?, ?, ?, 'admin', ?)");
+        $stmt->execute([$superUser, $hash, $superEmail, $apiKey]);
+    }
+}
+
 function getDB() {
     static $pdo = null;
     if ($pdo === null) {
         try {
-            $pdo = new PDO(
-                'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
-                DB_USER,
-                DB_PASS,
-                [
+            if (DB_TYPE === 'sqlite') {
+                $dbPath = DB_SQLITE_PATH;
+                $isNew = !file_exists($dbPath) || filesize($dbPath) === 0;
+                $pdo = new PDO('sqlite:' . $dbPath, null, null, [
                     PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
                     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                     PDO::ATTR_EMULATE_PREPARES   => false,
-                ]
-            );
-            // Self-healing migration: Add post_image column to backlink_queue table if missing
+                ]);
+                $pdo->exec('PRAGMA foreign_keys = ON;');
+                $pdo->exec('PRAGMA journal_mode = WAL;');
+
+                // MySQL compatibility functions in SQLite
+                if (method_exists($pdo, 'sqliteCreateFunction')) {
+                    $pdo->sqliteCreateFunction('NOW', fn() => date('Y-m-d H:i:s'));
+                    $pdo->sqliteCreateFunction('CURDATE', fn() => date('Y-m-d'));
+                    $pdo->sqliteCreateFunction('IFNULL', fn($a, $b) => $a !== null ? $a : $b);
+                }
+
+                if ($isNew) {
+                    initSqliteDatabase($pdo);
+                }
+            } else {
+                $pdo = new PDO(
+                    'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
+                    DB_USER,
+                    DB_PASS,
+                    [
+                        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                        PDO::ATTR_EMULATE_PREPARES   => false,
+                    ]
+                );
+            }
+            // Self-healing migration
             try {
                 $pdo->exec("ALTER TABLE backlink_queue ADD COLUMN post_image VARCHAR(255) DEFAULT NULL");
-            } catch (PDOException $ex) {}
-        } catch (PDOException $e) {
+            } catch (Throwable $ex) {}
+            try {
+                $pdo->exec("ALTER TABLE backlink_queue ADD COLUMN published_url TEXT DEFAULT NULL");
+            } catch (Throwable $ex) {}
+        } catch (Throwable $e) {
             if (!empty($_GET['ajax']) || !empty($_SERVER['HTTP_X_REQUESTED_WITH'])) {
                 header('Content-Type: application/json');
-                die(json_encode(['error' => 'Database connection failed. Import database.sql in phpMyAdmin.']));
+                die(json_encode(['error' => 'Database connection failed: ' . $e->getMessage()]));
             }
             die('<div style="font-family:sans-serif;max-width:600px;margin:40px auto;padding:24px;border:1px solid #dc3545;border-radius:8px;">'
                 . '<h3>Database connection failed</h3>'
                 . '<p>' . htmlspecialchars($e->getMessage()) . '</p>'
-                . '<ol><li>Start MySQL (XAMPP/WAMP)</li>'
-                . '<li>Import <code>database.sql</code> in phpMyAdmin</li>'
-                . '<li>Edit <code>config.php</code> — DB_HOST, DB_USER, DB_PASS</li></ol>'
-                . '<p><a href="setup.php">Run setup check</a></p></div>');
+                . '<p><a href="setup.php">Run setup check</a> | <a href="reset-all.php">Reset Database</a></p></div>');
         }
     }
     return $pdo;
+}
+
+function getDBConnection() {
+    return getDB();
 }
 
 function requireLogin() {
@@ -230,6 +424,20 @@ function resolveProjectImagePath($projectId = 0, $enqueuedImg = null, $projectIm
         return realpath($allImages[0]);
     }
 
+    // Priority 6: User uploaded logo / branding image in assets/
+    $assetsDir = __DIR__ . '/assets/';
+    $logoCandidates = [
+        $assetsDir . 'logo.jpeg',
+        $assetsDir . 'logo.jpg',
+        $assetsDir . 'logo.png',
+        $assetsDir . 'logo.webp',
+    ];
+    foreach ($logoCandidates as $cand) {
+        if (file_exists($cand) && filesize($cand) > 0) {
+            return realpath($cand);
+        }
+    }
+
     return '';
 }
 
@@ -281,6 +489,11 @@ function hasChatGPT(): bool {
 function hasGemini(): bool {
     $k = GEMINI_API_KEY;
     return $k !== '' && strpos($k, 'your-') === false;
+}
+
+function hasGroq(): bool {
+    $k = defined('GROQ_API_KEY') ? GROQ_API_KEY : '';
+    return !empty($k) && strpos($k, 'your-') === false;
 }
 
 /**
@@ -773,6 +986,69 @@ if (!function_exists('generateWithGemini')) {
             }
             break;
         }
+        return null;
+    }
+}
+
+if (!function_exists('generateWithGroq')) {
+    function generateWithGroq(string $prompt, ?string $apiKey = null, ?string $model = null, int $maxTokens = 2000): ?string {
+        $apiKey = $apiKey ?? (defined('GROQ_API_KEY') ? GROQ_API_KEY : '');
+        if (empty($apiKey) || strpos($apiKey, 'your-') === 0) {
+            return null;
+        }
+
+        // Check if xAI Grok (starts with xai-) or Groq (starts with gsk_ or other)
+        $isXaiGrok = (strpos($apiKey, 'xai-') === 0);
+        $endpoint = $isXaiGrok ? 'https://api.x.ai/v1/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
+        
+        $candidateModels = [];
+        if (!empty($model)) {
+            $candidateModels[] = $model;
+        }
+        if ($isXaiGrok) {
+            $candidateModels = array_unique(array_merge($candidateModels, ['grok-beta', 'grok-2']));
+        } else {
+            $defaultModel = defined('GROQ_MODEL') && !empty(GROQ_MODEL) ? GROQ_MODEL : 'qwen/qwen3.8-27b';
+            $candidateModels = array_unique(array_merge($candidateModels, [$defaultModel, 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant']));
+        }
+
+        $randomSeed = rand(100000, 999999);
+        $uniquePrompt = $prompt . "\n\nGenerate completely unique content. Random seed: {$randomSeed}. Current timestamp: " . time() . ". Do not repeat any previous content.";
+
+        foreach ($candidateModels as $tryModel) {
+            $ch = curl_init($endpoint);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => json_encode([
+                    'model'       => $tryModel,
+                    'messages'    => [
+                        ['role' => 'system', 'content' => 'You are an expert SEO content writer. Write unique, engaging content every time. Never repeat the same content twice. Use HTML when asked.'],
+                        ['role' => 'user',   'content' => $uniquePrompt],
+                    ],
+                    'temperature' => 1.0,
+                    'max_tokens'  => $maxTokens,
+                ]),
+                CURLOPT_HTTPHEADER => [
+                    'Authorization: Bearer ' . $apiKey,
+                    'Content-Type: application/json',
+                ],
+                CURLOPT_TIMEOUT        => 30,
+                CURLOPT_SSL_VERIFYPEER => false,
+            ]);
+            $res = curl_exec($ch);
+            $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200) {
+                $response = json_decode($res, true);
+                $content = $response['choices'][0]['message']['content'] ?? null;
+                if (!empty($content)) {
+                    return $content;
+                }
+            }
+        }
+
         return null;
     }
 }

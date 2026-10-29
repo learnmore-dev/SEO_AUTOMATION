@@ -7,6 +7,8 @@
 
 if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
     $winPyCandidates = [
+        'C:\\Users\\altaf\\AppData\\Local\\Programs\\Python\\Python310\\python.exe',
+        'C:\\Users\\altaf\\AppData\\Local\\Programs\\Python\\Python313\\python.exe',
         'C:\\Users\\ADMIN\\AppData\\Local\\Programs\\Python\\Python314\\python.exe',
         'C:\\Users\\ADMIN\\AppData\\Local\\Programs\\Python\\Python311\\python.exe',
         'python'
@@ -112,13 +114,19 @@ function runSeleniumScript(string $script, array $args, int $timeout = 240): arr
         if ((time() - $start) > $timeout) {
             proc_terminate($process);
             $lines = array_filter(explode("\n", trim($output)));
+            $lastLog = '';
             foreach ($lines as $line) {
                 $decoded = json_decode(trim($line), true);
                 if ($decoded !== null && isset($decoded['log'])) {
                     echo "[Python Log (Pre-timeout)] " . $decoded['log'] . "\n";
+                    $lastLog = $decoded['log'];
                 }
             }
-            return ['success' => false, 'error' => "Selenium timeout after {$timeout}s. Stderr: " . $stderr];
+            $extra = $lastLog ? " (Last stage: {$lastLog})" : '';
+            if (trim($stderr)) {
+                $extra .= " Stderr: " . trim($stderr);
+            }
+            return ['success' => false, 'error' => "Selenium timeout after {$timeout}s{$extra}"];
         }
         usleep(100000); // 100ms
     }
@@ -393,7 +401,7 @@ function seleniumGeneric(string $platform, array $creds, string $keyword, string
 // Handles: scoopit, wakelet, padlet, pearltrees, mewe, instapaper, vivauae
 // ============================================================
 function seleniumMicroBlog(string $platform, array $creds, string $keyword, string $targetSite, string $aiTitle = '', string $aiContent = '', int $projectId = 0): array {
-    $email    = $creds['username'] ?? '';
+    $email    = ltrim(trim($creds['username'] ?? ''), '@');
     $password = decodePass($creds['password'] ?? '');
 
     if (empty($email) || empty($password)) {
@@ -437,6 +445,20 @@ function seleniumMicroBlog(string $platform, array $creds, string $keyword, stri
         $aiContent = strip_tags($ai['content']);
     }
 
+    if (strtolower($platform) === 'mewe') {
+        $sessionDir = __DIR__ . '/sessions';
+        if (!is_dir($sessionDir)) {
+            @mkdir($sessionDir, 0755, true);
+        }
+        $sessionTok = trim((string)($creds['api_key'] ?? ''));
+        $sessionFile = $sessionDir . '/mewe_inject.txt';
+        if ($sessionTok !== '') {
+            file_put_contents($sessionFile, $sessionTok);
+        } elseif (is_file($sessionFile) && filesize($sessionFile) === 0) {
+            @unlink($sessionFile);
+        }
+    }
+
     // Write content to temp file — avoids Windows CLI 8191 char limit
     $tmpFile = sys_get_temp_dir() . '/' . $platform . '_content_' . time() . '.txt';
     file_put_contents($tmpFile, $aiContent);
@@ -449,7 +471,7 @@ function seleniumMicroBlog(string $platform, array $creds, string $keyword, stri
     if (!empty($result['success'])) {
         return [
             'success'    => true,
-            'url'        => $result['url'] ?: "https://www.{$platform}.com",
+            'url'        => $result['url'] ?: (strtolower($platform) === 'mewe' ? 'https://mewe.com/' : "https://www.{$platform}.com"),
             'source'     => 'Selenium',
             'post_title' => $aiTitle,
         ];
@@ -459,7 +481,7 @@ function seleniumMicroBlog(string $platform, array $creds, string $keyword, stri
     return [
         'manual'     => true,
         'message'    => ucfirst($platform) . ': ' . $errorMsg,
-        'url'        => "https://www.{$platform}.com",
+        'url'        => strtolower($platform) === 'mewe' ? 'https://mewe.com/' : "https://www.{$platform}.com",
         'source'     => 'Selenium Fallback',
         'post_title' => $aiTitle,
     ];
@@ -679,68 +701,7 @@ function seleniumLiveJournal(array $creds, string $keyword, string $targetSite, 
 // MINDS.COM — Playwright auto-post
 // ============================================================
 function seleniumMinds(array $creds, string $keyword, string $targetSite, string $aiTitle = '', string $aiContent = '', int $projectId = 0): array {
-    $email    = $creds['username'] ?? '';
-    $password = decodePass($creds['password'] ?? '');
-
-    if (empty($email) || empty($password)) {
-        return ['error' => 'Minds: Add email + password in Social Accounts.'];
-    }
-
-    if (empty($aiTitle) || empty($aiContent)) {
-        require_once dirname(__DIR__) . '/ai-content.php';
-        $db = getDB();
-        $postCount = 1;
-        $usedTitles = [];
-        $businessName = '';
-        $businessDesc = '';
-        try {
-            $stmt = $db->prepare("SELECT COUNT(*) FROM backlinks WHERE platform='minds' AND status='created'");
-            $stmt->execute();
-            $postCount = (int)$stmt->fetchColumn() + 1;
-
-            $stmt2 = $db->prepare("SELECT post_title FROM backlinks WHERE post_title IS NOT NULL ORDER BY created_at ASC LIMIT 50");
-            $stmt2->execute();
-            $usedTitles = $stmt2->fetchAll(PDO::FETCH_COLUMN);
-
-            if ($projectId > 0) {
-                $pStmt = $db->prepare("SELECT business_name, business_desc FROM projects WHERE id=?");
-                $pStmt->execute([$projectId]);
-                $proj = $pStmt->fetch(PDO::FETCH_ASSOC);
-                if ($proj) {
-                    $businessName = $proj['business_name'] ?? '';
-                    $businessDesc = $proj['business_desc'] ?? '';
-                }
-            }
-        } catch (Exception $e) {}
-
-        $ai = generateAIContent($keyword, $targetSite, 'minds', 'micro_blog', '', OPENAI_API_KEY, $postCount, $usedTitles, $businessName, $businessDesc);
-        if (empty($ai['content'])) {
-            return ['error' => $ai['error'] ?? 'AI content generation failed for Minds. Check API keys.'];
-        }
-        $aiTitle   = $ai['title']   ?? generateUniqueTitle($keyword, $postCount, $usedTitles, OPENAI_API_KEY);
-        $aiContent = strip_tags($ai['content']);
-    }
-
-    $args   = [$email, $password, $keyword, $targetSite, $aiTitle, $aiContent];
-    $result = runSeleniumScript('minds_post_playwright.py', $args, 240);
-
-    if (!empty($result['success'])) {
-        return [
-            'success'    => true,
-            'url'        => $result['url'] ?: "https://www.minds.com",
-            'source'     => 'Playwright',
-            'post_title' => $aiTitle,
-        ];
-    }
-
-    $errorMsg = $result['error'] ?? 'Unknown error';
-    return [
-        'manual'     => true,
-        'message'    => 'Minds: ' . $errorMsg,
-        'url'        => "https://www.minds.com",
-        'source'     => 'Playwright Fallback',
-        'post_title' => $aiTitle,
-    ];
+    return seleniumMicroBlog('minds', $creds, $keyword, $targetSite, $aiTitle, $aiContent, $projectId);
 }
 
 // ============================================================
@@ -820,6 +781,15 @@ function seleniumLiveJournalPlaywright(array $creds, string $keyword, string $ta
     $tmpFile = sys_get_temp_dir() . '/lj_content_' . time() . '.txt';
     file_put_contents($tmpFile, $aiBody);
     $args[] = $tmpFile;
+
+    // 1. Try pure XML-RPC script (fast, reliable, no browser or playwright needed)
+    if (file_exists(SELENIUM_DIR . '/livejournal_post.py')) {
+        $apiResult = runSeleniumScript('livejournal_post.py', $args, 120);
+        if (!empty($apiResult['success'])) {
+            @unlink($tmpFile);
+            return ['success' => true, 'url' => $apiResult['url'] ?: 'https://' . $username . '.livejournal.com/', 'source' => 'API', 'post_title' => $aiTitle];
+        }
+    }
 
     $result = runSeleniumScript('livejournal_post_playwright.py', $args, 240);
 
@@ -922,7 +892,19 @@ function seleniumSymbaloo(array $creds, string $keyword, string $targetSite, str
 
     $customMix = $creds['api_key'] ?? '';
     $args      = [$email, $password, $keyword, $targetSite, $customMix, $aiDesc];
-    $result    = runSeleniumScript('symbaloo_post_playwright.py', $args, 240);
+
+    // 1. Try pure Selenium script (works without Playwright package)
+    $result = runSeleniumScript('symbaloo_post_tile.py', $args, 240);
+
+    // 2. If symbaloo_post_tile failed or errored, try playwright script as backup if available
+    if (empty($result['success']) && file_exists(SELENIUM_DIR . '/symbaloo_post_playwright.py')) {
+        $pwResult = runSeleniumScript('symbaloo_post_playwright.py', $args, 240);
+        if (!empty($pwResult['success'])) {
+            $result = $pwResult;
+        } elseif (strpos($pwResult['error'] ?? '', 'No module named') === false) {
+            $result = $pwResult;
+        }
+    }
 
     if (!empty($result['success'])) {
         return [

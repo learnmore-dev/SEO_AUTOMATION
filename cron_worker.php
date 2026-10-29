@@ -29,8 +29,9 @@ $running = (int)$stmt->fetchColumn();
 
 if ($running > 0) {
     // Timeout check: if a task is stuck in 'processing' status for more than 2.5 minutes, auto-reset it to pending and resume
-    $timeoutStmt = $db->prepare("UPDATE backlink_queue SET status = 'pending', error_message = NULL WHERE status = 'processing' AND updated_at < NOW() - INTERVAL 150 SECOND");
-    $timeoutStmt->execute();
+    $timeoutCutoff = date('Y-m-d H:i:s', time() - 150);
+    $timeoutStmt = $db->prepare("UPDATE backlink_queue SET status = 'pending', error_message = NULL WHERE status = 'processing' AND updated_at < ?");
+    $timeoutStmt->execute([$timeoutCutoff]);
     if ($timeoutStmt->rowCount() > 0) {
         @exec("php " . __DIR__ . "/cleanup_zombies.php > /dev/null 2>&1 &");
         echo "Stuck processing task auto-reset to pending. Resuming queue execution.\n";
@@ -57,14 +58,14 @@ function isSeleniumPlatform($platform, $creds = []) {
     }
     
     // These platforms strictly use Selenium browser automation
-    $seleniumOnly = ['wakelet', 'symbaloo', 'pearltrees', 'diigo', 'plurk', 'livejournal'];
+    $seleniumOnly = ['wakelet', 'symbaloo', 'pearltrees', 'plurk', 'livejournal', 'penzu'];
     if (in_array($platform, $seleniumOnly)) {
         return true;
     }
     
-    // For platforms that support both API and Selenium (like tumblr, mewe, instapaper)
+    // For platforms that support both API and Selenium (like tumblr, mewe, instapaper, minds)
     // If they have no API key / token in credentials, they will fallback to Selenium
-    $hybridPlatforms = ['tumblr', 'mewe', 'instapaper'];
+    $hybridPlatforms = ['tumblr', 'mewe', 'instapaper', 'minds'];
     if (in_array($platform, $hybridPlatforms)) {
         $apiKey = $creds['api_key'] ?? '';
         if (empty($apiKey)) {

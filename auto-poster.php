@@ -43,14 +43,15 @@ if ($isDirectRequest) {
     }
 
     // Fetch ALL accounts for this platform matching this project_id
-    $credStmt = $db->prepare('SELECT * FROM social_accounts WHERE project_id=? AND platform=? AND status="active" ORDER BY id ASC');
-    $credStmt->execute([$projectId, $platform]);
+    $userId = (int)$_SESSION['user_id'];
+    $credStmt = $db->prepare('SELECT * FROM social_accounts WHERE (project_id=? OR project_id=0) AND user_id=? AND platform=? AND status="active" ORDER BY id ASC');
+    $credStmt->execute([$projectId, $userId, $platform]);
     $allCreds = $credStmt->fetchAll();
 
     // If specific account ID requested (from auto-post-all parallel)
     $accountId = (int)($_GET['_account'] ?? 0);
     if ($accountId) {
-        $allCreds = array_filter($allCreds, fn($c) => $c['id'] === $accountId);
+        $allCreds = array_filter($allCreds, fn($c) => (int)$c['id'] === $accountId);
         $allCreds = array_values($allCreds);
     }
 
@@ -919,101 +920,108 @@ function postToDevTo($apiKey, $keyword, $targetSite, $geminiKey, $openaiKey, $po
 
 // ============================================================
 // HASHNODE - GraphQL API
-// HASHNODE - GraphQL API (PAID since May 2026)
-// Free accounts: content generated + manual paste at hashnode.com
-// Pro accounts:  API Token from hashnode.com/settings/developer
+// Endpoint moved: gql.hashnode.com now 301s to an announcement page.
+// Live endpoint: https://gql-beta.hashnode.com/
+// Publishing requires Hashnode Pro on the publication (May 2026+).
 // ============================================================
+function hashnodeGql(string $apiKey, string $query, ?array $variables = null): array {
+    $payload = ['query' => $query];
+    if ($variables !== null) {
+        $payload['variables'] = $variables;
+    }
+    $ch = curl_init('https://gql-beta.hashnode.com/');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => json_encode($payload),
+        CURLOPT_HTTPHEADER     => [
+            'Authorization: Bearer ' . $apiKey,
+            'Content-Type: application/json',
+            'User-Agent: SEO-System',
+        ],
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => false,
+    ]);
+    $resp = curl_exec($ch);
+    $err  = curl_error($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $json = json_decode((string) $resp, true);
+    $gqlErr = $json['errors'][0]['message'] ?? '';
+    return [
+        'http'  => $code,
+        'curl'  => $err,
+        'json'  => is_array($json) ? $json : null,
+        'error' => $gqlErr ?: ($err ?: ($code >= 400 ? 'Hashnode HTTP ' . $code : '')),
+    ];
+}
+
 function postToHashnode($apiKey, $publicationId, $keyword, $targetSite, $geminiKey, $openaiKey, $postCount = 1, array $usedTitles = [], string $businessName = '', string $businessDesc = '') {
-    if (empty($apiKey)) return ['error' => 'Hashnode API key missing. Get from: https://hashnode.com/settings/developer'];
+    if (empty($apiKey)) {
+        return ['error' => 'Hashnode API key missing. Get from: https://hashnode.com/settings/developer'];
+    }
+
+    $me = hashnodeGql($apiKey, '{ me { id username publications(first: 5) { edges { node { id title url } } } } }');
+    if (!empty($me['error']) && empty($me['json']['data']['me'])) {
+        return ['error' => 'Hashnode login failed: ' . $me['error']];
+    }
+    $meData = $me['json']['data']['me'] ?? null;
+    if (!$meData) {
+        return ['error' => 'Hashnode token invalid. Generate a new PAT at hashnode.com/settings/developer'];
+    }
+
+    $pubId = trim((string) $publicationId);
+    if ($pubId === '' || !preg_match('/^[a-f0-9]{24}$/i', $pubId)) {
+        $pubId = $meData['publications']['edges'][0]['node']['id'] ?? '';
+    }
+    if ($pubId === '') {
+        return ['error' => 'No Hashnode blog found on this account. Create a blog at hashnode.com, then retry.'];
+    }
 
     $ai = generateAIContent($keyword, $targetSite, 'hashnode', 'blog_post', '', $openaiKey, $postCount, $usedTitles, $businessName, $businessDesc);
-    if (empty($ai['content'])) return ['error' => $ai['error'] ?? 'AI content generation failed. Check OpenAI/Gemini API keys.'];
+    if (empty($ai['content'])) {
+        return ['error' => $ai['error'] ?? 'AI content generation failed. Check OpenAI/Gemini API keys.'];
+    }
 
     $title = $ai['title'] ?? ucwords($keyword) . ' Training Guide - ' . date('Y');
-    $slug    = substr(preg_replace('/[^a-z0-9]+/', '-', strtolower($keyword)) . '-guide-' . date('Y'), 0, 100);
-    $slug    = trim($slug, '-');
-    // Convert HTML links to Markdown links first to preserve targetSite
+    $slug  = substr(preg_replace('/[^a-z0-9]+/', '-', strtolower($keyword)) . '-guide-' . date('Y') . '-' . time(), 0, 100);
+    $slug  = trim($slug, '-');
     $content = $ai['content'] ?? '';
     $content = preg_replace('/<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)<\/a>/is', '[$2]($1)', $content);
     $content = strip_tags($content);
-
-    // Ensure targetSite is in the content
     $cleanSite = preg_replace('/^https?:\/\/(www\.)?/', '', $targetSite);
     if (stripos($content, $cleanSite) === false) {
         $content .= "\n\n## Learn More\nVisit [" . $targetSite . "](" . $targetSite . ")";
     }
 
-    // Try API (Pro accounts only)
-    $pubId = $publicationId ?: null;
-    if (!$pubId) {
-        // Auto-fetch publication ID
-        $meQuery = '{ me { publications(first: 1) { edges { node { id title } } } } }';
-        $meCh = curl_init('https://gql.hashnode.com/');
-        curl_setopt_array($meCh, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode(['query' => $meQuery]),
-            CURLOPT_HTTPHEADER     => ['Authorization: ' . $apiKey, 'Content-Type: application/json'],
-            CURLOPT_TIMEOUT        => 10,
-            CURLOPT_SSL_VERIFYPEER => false,
-        ]);
-        $meResp = curl_exec($meCh);
-        $meCode = (int)curl_getinfo($meCh, CURLINFO_HTTP_CODE);
-        curl_close($meCh);
-        if ($meCode === 200) {
-            $meData = json_decode($meResp, true);
-            $pubId  = $meData['data']['me']['publications']['edges'][0]['node']['id'] ?? null;
-        }
+    $mutation = 'mutation PublishPost($input: PublishPostInput!) { publishPost(input: $input) { post { url } } }';
+    $vars = ['input' => [
+        'title'            => $title,
+        'contentMarkdown'  => $content,
+        'slug'             => $slug,
+        'publicationId'    => $pubId,
+    ]];
+    $pub = hashnodeGql($apiKey, $mutation, $vars);
+    $url = $pub['json']['data']['publishPost']['post']['url'] ?? null;
+    if ($url) {
+        return ['success' => true, 'url' => $url, 'source' => $ai['source'] ?? '', 'post_title' => $title];
     }
 
-    // If we have pubId, try to publish (Pro plan)
-    if ($pubId) {
-        $query = 'mutation PublishPost($input: PublishPostInput!) { publishPost(input: $input) { post { url } } }';
-        $vars  = ['input' => ['title' => $title, 'contentMarkdown' => $content, 'slug' => $slug, 'tags' => [], 'publicationId' => $pubId]];
-        $ch = curl_init('https://gql.hashnode.com/');
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => json_encode(['query' => $query, 'variables' => $vars]),
-            CURLOPT_HTTPHEADER     => ['Authorization: ' . $apiKey, 'Content-Type: application/json'],
-            CURLOPT_TIMEOUT        => 30,
-            CURLOPT_SSL_VERIFYPEER => false,
-        ]);
-        $resp = curl_exec($ch);
-        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        $res = json_decode($resp, true);
-        $url = $res['data']['publishPost']['post']['url'] ?? null;
-        if ($url) return ['success' => true, 'url' => $url, 'source' => $ai['source'], 'post_title' => $title ?? null];
-
-        // Slug conflict retry
-        $gqlErr = $res['errors'][0]['message'] ?? '';
-        if (stripos($gqlErr, 'slug') !== false) {
-            $vars['input']['slug'] = $slug . '-' . time();
-            $ch2 = curl_init('https://gql.hashnode.com/');
-            curl_setopt_array($ch2, [CURLOPT_RETURNTRANSFER=>true, CURLOPT_FOLLOWLOCATION=>false, CURLOPT_POST=>true,
-                CURLOPT_POSTFIELDS=>json_encode(['query'=>$query,'variables'=>$vars]),
-                CURLOPT_HTTPHEADER=>['Authorization: '.$apiKey,'Content-Type: application/json'],
-                CURLOPT_TIMEOUT=>30, CURLOPT_SSL_VERIFYPEER=>false]);
-            $resp2 = curl_exec($ch2); curl_close($ch2);
-            $res2  = json_decode($resp2, true);
-            $url2  = $res2['data']['publishPost']['post']['url'] ?? null;
-            if ($url2) return ['success' => true, 'url' => $url2, 'source' => $ai['source'], 'post_title' => $title ?? null];
+    $gqlErr = $pub['error'] ?: 'Unknown Hashnode publish error';
+    if (stripos($gqlErr, 'slug') !== false) {
+        $vars['input']['slug'] = $slug . '-' . time();
+        $retry = hashnodeGql($apiKey, $mutation, $vars);
+        $url2 = $retry['json']['data']['publishPost']['post']['url'] ?? null;
+        if ($url2) {
+            return ['success' => true, 'url' => $url2, 'source' => $ai['source'] ?? '', 'post_title' => $title];
         }
+        $gqlErr = $retry['error'] ?: $gqlErr;
     }
-
-    // Hashnode API is paid (May 2026+) — return content for manual paste
-    // Content is fully generated and ready to copy-paste
-    return [
-        'manual'  => true,
-        'message' => 'Hashnode API requires Pro plan (paid). Content ready — copy title & content below, paste at hashnode.com/new',
-        'title'   => $title,
-        'content' => $content,
-        'url'     => 'https://hashnode.com/new',
-        'source'  => $ai['source'],
-    ];
+    if (stripos($gqlErr, 'pro plan') !== false || stripos($gqlErr, 'FORBIDDEN') !== false) {
+        return ['error' => 'Hashnode API needs Pro on the blog (' . $gqlErr . '). Upgrade at hashnode.com dashboard → Billing.'];
+    }
+    return ['error' => 'Hashnode publish failed: ' . $gqlErr];
 }
 
 // ============================================================
@@ -1567,44 +1575,71 @@ function postToFourShared($email, $password, $keyword, $targetSite, $geminiKey, 
 // No public API key needed; uses MediaFire's REST API v1.5
 // Docs: https://www.mediafire.com/developers/core_api/1.5/getting_started/
 // ============================================================
-function postToMediaFire($email, $password, $keyword, $targetSite, $geminiKey, $openaiKey) {
+function mediafireHttp(string $url, string $cookieFile, $post = null): array {
+    $ch = curl_init($url);
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_COOKIEJAR => $cookieFile,
+        CURLOPT_COOKIEFILE => $cookieFile,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    ];
+    if ($post !== null) {
+        $opts[CURLOPT_POST] = true;
+        $opts[CURLOPT_POSTFIELDS] = $post;
+        $opts[CURLOPT_HTTPHEADER] = [
+            'Referer: https://www.mediafire.com/login/',
+            'Origin: https://www.mediafire.com',
+        ];
+    }
+    curl_setopt_array($ch, $opts);
+    $body = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return ['code' => $code, 'body' => (string)$body];
+}
 
-    // â”€â”€ Step 1: Authenticate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    $appId     = '42511';          // MediaFire public web app ID
-    $apiVer    = '1.5';
-    $loginUrl  = 'https://www.mediafire.com/api/' . $apiVer . '/user/get_session_token.php';
-
-    $ctx = stream_context_create([
-        'http' => [
-            'method'  => 'GET',
-            'header'  => "User-Agent: Mozilla/5.0\r\n",
-            'timeout' => 20,
-            'ignore_errors' => true,
-        ],
-        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
+function mediafireWebSession(string $email, string $password): array {
+    if ($email === '' || $password === '') {
+        return ['error' => 'MediaFire email + password required.'];
+    }
+    $cookieFile = sys_get_temp_dir() . '/mf_ck_' . uniqid('', true) . '.txt';
+    $loginPage = mediafireHttp('https://www.mediafire.com/login/', $cookieFile);
+    $security = '';
+    if (preg_match('/name="security" value="([^"]+)"/', $loginPage['body'], $m)) {
+        $security = $m[1];
+    }
+    $login = mediafireHttp('https://www.mediafire.com/dynamic/client_login/mediafire.php', $cookieFile, [
+        'security' => $security,
+        'login_email' => $email,
+        'login_pass' => $password,
+        'login_remember' => 'true',
     ]);
-
-    $loginResp = @file_get_contents($loginUrl . '?' . http_build_query([
-        'email'           => $email,
-        'password'        => md5($password),
-        'application_id'  => $appId,
-        'response_format' => 'json',
-        'token_version'   => '2',
-    ]), false, $ctx);
-
-    if (!$loginResp) {
-        // API dead â€” skip to PDF generation directly
-        $sessionToken = null;
-        goto generate_pdf_mediafire;
+    $loginJson = json_decode($login['body'], true);
+    if ((int)($loginJson['action'] ?? 0) !== 15) {
+        @unlink($cookieFile);
+        return ['error' => 'MediaFire login failed. Check email and password.'];
     }
-
-    $loginData = json_decode($loginResp, true);
-    if (empty($loginData['response']['session_token'])) {
-        $sessionToken = null;
-        goto generate_pdf_mediafire;
+    $tokenResp = mediafireHttp('https://www.mediafire.com/application/get_session_token.php', $cookieFile, '');
+    $tokenJson = json_decode($tokenResp['body'], true);
+    $sessionToken = (string)($tokenJson['response']['session_token'] ?? '');
+    if ($sessionToken === '') {
+        @unlink($cookieFile);
+        return ['error' => 'MediaFire session token missing after login.'];
     }
+    return ['cookie' => $cookieFile, 'session_token' => $sessionToken];
+}
 
-    $sessionToken = $loginData['response']['session_token'];
+function postToMediaFire($email, $password, $keyword, $targetSite, $geminiKey, $openaiKey) {
+    $apiVer = '1.5';
+    $auth = mediafireWebSession((string)$email, (string)$password);
+    $sessionToken = $auth['session_token'] ?? null;
+    $cookieFile = $auth['cookie'] ?? null;
+    if (empty($sessionToken)) {
+        $sessionToken = null;
+    }
 
     generate_pdf_mediafire:
     // â”€â”€ Step 2: Fetch target URL â†’ PDF via Chrome (fallback: AI) â”€
@@ -1698,65 +1733,75 @@ function postToMediaFire($email, $password, $keyword, $targetSite, $geminiKey, $
     file_put_contents($localPath, $pdf);
     $localPdfUrl = SITE_URL . '/uploads/' . $filename;
 
-    // Only try MediaFire upload if we have a valid session token
     if ($sessionToken) {
-        $uploadCheckUrl = 'https://www.mediafire.com/api/' . $apiVer . '/upload/check.php?' . http_build_query([
-            'session_token'   => $sessionToken,
-            'filename'        => $filename,
-            'size'            => strlen($pdf),
+        $uploadUrl = 'https://www.mediafire.com/api/' . $apiVer . '/upload/simple.php?' . http_build_query([
+            'session_token' => $sessionToken,
             'response_format' => 'json',
+            'action_on_duplicate' => 'keep',
         ]);
-        @file_get_contents($uploadCheckUrl); // optional pre-check
-
-        $boundary = '----MFBoundary' . uniqid();
-        $body_raw = "--{$boundary}\r\n"
-                  . "Content-Disposition: form-data; name=\"Filedata\"; filename=\"{$filename}\"\r\n"
-                  . "Content-Type: application/pdf\r\n\r\n"
-                  . $pdf . "\r\n"
-                  . "--{$boundary}--\r\n";
-
-        $uploadUrl = 'https://www.mediafire.com/api/' . $apiVer . '/upload/simple.php?'
-                   . http_build_query([
-                       'session_token'       => $sessionToken,
-                       'response_format'     => 'json',
-                       'action_on_duplicate' => 'keep',
-                   ]);
-
-        $ctx = stream_context_create([
-            'http' => [
-                'method'  => 'POST',
-                'header'  => "Content-Type: multipart/form-data; boundary={$boundary}\r\n"
-                           . "Content-Length: " . strlen($body_raw) . "\r\n",
-                'content' => $body_raw,
-                'timeout' => 60,
-                'ignore_errors' => true,
-            ],
+        $upload = mediafireHttp($uploadUrl, (string)$cookieFile, [
+            'Filedata' => new CURLFile($localPath, 'application/pdf', $filename),
         ]);
+        $uploadData = json_decode($upload['body'], true);
+        $uploadKey = $uploadData['response']['doupload']['key'] ?? null;
+        $quickKey = null;
+        $pollFileName = $filename;
 
-        $uploadResp = @file_get_contents($uploadUrl, false, $ctx);
-        $uploadData = json_decode($uploadResp, true);
-        $quickKey   = $uploadData['response']['doupload']['key']
-                   ?? $uploadData['response']['upload_result']['filedata']['quickkey']
-                   ?? null;
+        if ($uploadKey) {
+            for ($i = 0; $i < 8; $i++) {
+                sleep($i === 0 ? 2 : 2);
+                $pollUrl = 'https://www.mediafire.com/api/' . $apiVer . '/upload/poll_upload.php?' . http_build_query([
+                    'session_token' => $sessionToken,
+                    'key' => $uploadKey,
+                    'filename' => $filename,
+                    'response_format' => 'json',
+                ]);
+                $poll = mediafireHttp($pollUrl, (string)$cookieFile);
+                $pollData = json_decode($poll['body'], true);
+                $done = $pollData['response']['doupload'] ?? [];
+                if ((string)($done['status'] ?? '') === '99' && !empty($done['quickkey'])) {
+                    $quickKey = $done['quickkey'];
+                    if (!empty($done['filename'])) {
+                        $pollFileName = $done['filename'];
+                    }
+                    break;
+                }
+            }
+        }
 
         if ($quickKey) {
-            $linkUrl  = 'https://www.mediafire.com/api/' . $apiVer . '/file/get_links.php?' . http_build_query([
-                'session_token'   => $sessionToken,
-                'quick_key'       => $quickKey,
-                'link_type'       => 'view',
+            mediafireHttp('https://www.mediafire.com/api/' . $apiVer . '/file/update.php', (string)$cookieFile, [
+                'session_token' => $sessionToken,
+                'quick_key' => $quickKey,
+                'privacy' => 'public',
+                'description' => 'Learn more: ' . $targetSite,
                 'response_format' => 'json',
             ]);
-            $linkResp = @file_get_contents($linkUrl);
-            $linkData = json_decode($linkResp, true);
-            $viewUrl  = $linkData['response']['links'][0]['view'] ?? ('https://www.mediafire.com/file/' . $quickKey);
-
+            $linkUrl = 'https://www.mediafire.com/api/' . $apiVer . '/file/get_links.php?' . http_build_query([
+                'session_token' => $sessionToken,
+                'quick_key' => $quickKey,
+                'link_type' => 'normal,view',
+                'response_format' => 'json',
+            ]);
+            $linkResp = mediafireHttp($linkUrl, (string)$cookieFile);
+            $linkData = json_decode($linkResp['body'], true);
+            $viewUrl = $linkData['response']['links'][0]['normal']
+                    ?? $linkData['response']['links'][0]['view']
+                    ?? ('https://www.mediafire.com/file/' . $quickKey . '/' . rawurlencode($pollFileName) . '/file');
+            if (!empty($cookieFile)) {
+                @unlink($cookieFile);
+            }
             return [
                 'success' => true,
-                'url'     => $viewUrl,
+                'url' => $viewUrl,
                 'message' => 'PDF uploaded to MediaFire successfully!',
-                'source'  => 'Chrome PDF / ChatGPT',
+                'source' => 'Chrome PDF / ChatGPT',
+                'post_title' => $pollFileName,
             ];
         }
+    }
+    if (!empty($cookieFile)) {
+        @unlink($cookieFile);
     }
 
     // â”€â”€ Fallback: PDF saved locally â€” show download button â”€â”€â”€
@@ -1935,7 +1980,7 @@ function postToMastodonSelenium(array $creds, string $keyword, string $targetSit
         return ['error' => 'Mastodon: Add email + password credentials.'];
     }
 
-    $scriptResult = runSeleniumScript('mastodon_setup_playwright.py',
+    $scriptResult = runSeleniumScript('mastodon_setup.py',
         [$email, trim($password), $keyword, $targetSite], 180);
 
     // Save token to DB — use id-based UPDATE for reliability
@@ -2493,11 +2538,93 @@ function postToGifyu($username, $password, $keyword, $targetSite, $openaiKey) {
 // INSTAPAPER — REST API v1 (XAUTH / username+password)
 // Endpoint: https://www.instapaper.com/api/1/bookmarks/add
 // ============================================================
+function instapaperBookmarkUrl(string $rawResponse): string {
+    $body = $rawResponse;
+    if (preg_match('/\r\n\r\n|\n\n/', $rawResponse, $m, PREG_OFFSET_CAPTURE)) {
+        $body = substr($rawResponse, $m[0][1] + strlen($m[0][0]));
+    }
+    $json = json_decode((string)$body, true);
+    if (!empty($json['bookmark_id']) && ctype_digit((string)$json['bookmark_id'])) {
+        return 'https://www.instapaper.com/read/' . $json['bookmark_id'];
+    }
+    if (preg_match('/"bookmark_id"\s*:\s*(\d+)/', (string)$body, $m)) {
+        return 'https://www.instapaper.com/read/' . $m[1];
+    }
+    if (preg_match('#https?://(?:www\.)?instapaper\.com/read/(\d+)#i', $rawResponse, $m)) {
+        return 'https://www.instapaper.com/read/' . $m[1];
+    }
+    return '';
+}
+
 function postToInstapaper($username, $password, $keyword, $targetSite, $openaiKey) {
     if (empty($username) || empty($password))
         return ['error' => 'Instapaper: Add email + password credentials.'];
 
-    // Instapaper xAuth (OAuth 1.0a simplified — consumer key is public)
+    $ai = generateAIContent($keyword, $targetSite, 'instapaper', 'blog_post', '', $openaiKey, $postCount ?? 1, $usedTitles ?? []);
+    $title = trim((string)($ai['title'] ?? ''));
+    if ($title === '') $title = 'Best ' . ucwords($keyword) . ' Guide - ' . date('Y');
+    $body = trim(strip_tags($ai['content'] ?? ''));
+    $body = preg_replace("/[ \t]+/", ' ', $body);
+    $body = preg_replace("/\n{3,}/", "\n\n", $body);
+    if (mb_strlen($body) < 400) {
+        $body = "This guide covers {$keyword} in detail: how to pick a layout, what hiring managers scan first, and how a structured builder saves time compared with a blank document. "
+            . "Use a clean template, keep achievements measurable, and export a consistent PDF. "
+            . "Full walkthrough and free templates: {$targetSite}";
+    }
+    if (stripos($body, $targetSite) === false) {
+        $body .= ' Read the full guide: ' . $targetSite;
+    }
+    $selection = mb_substr($body, 0, 4500);
+
+    $auth = curl_init('https://www.instapaper.com/api/authenticate');
+    curl_setopt_array($auth, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => http_build_query(['username' => $username, 'password' => $password]),
+        CURLOPT_USERAGENT      => 'Mozilla/5.0',
+        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER         => true,
+    ]);
+    $authResp = curl_exec($auth);
+    $authCode = (int)curl_getinfo($auth, CURLINFO_HTTP_CODE);
+    curl_close($auth);
+    if ($authCode === 403) {
+        return ['error' => 'Instapaper login failed. Check email and password.'];
+    }
+
+    $add = curl_init('https://www.instapaper.com/api/add');
+    curl_setopt_array($add, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => http_build_query([
+            'username'  => $username,
+            'password'  => $password,
+            'url'       => $targetSite,
+            'title'     => $title,
+            'selection' => $selection,
+        ]),
+        CURLOPT_USERAGENT      => 'Mozilla/5.0',
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER         => true,
+    ]);
+    $addResp = curl_exec($add);
+    $addCode = (int)curl_getinfo($add, CURLINFO_HTTP_CODE);
+    curl_close($add);
+
+    if ($addCode === 201 || $addCode === 200) {
+        $url = instapaperBookmarkUrl((string)$addResp);
+        if ($url === '') {
+            return ['error' => 'Instapaper saved the note but no public read URL was returned.'];
+        }
+        return ['success' => true, 'url' => $url, 'source' => 'Instapaper API', 'post_title' => $title];
+    }
+    if ($addCode === 403) {
+        return ['error' => 'Instapaper login failed. Check email and password.'];
+    }
+
+    // Instapaper xAuth fallback (OAuth 1.0a simplified — consumer key is public)
     $consumerKey    = 'rvhXMOjmLbpnvvqMEHxOhfpRdVNQbMOk'; // Instapaper public key
     $consumerSecret = 'SnHcEZClHbvjxJuuHyiLdePJdTNiLPhF';
     $tokenUrl       = 'https://www.instapaper.com/api/1/oauth/access_token';
@@ -2690,66 +2817,204 @@ function postToLiveJournal($username, $password, $keyword, $targetSite, $openaiK
 }
 
 // ============================================================
+// DIIGO — Official API v2
+// ============================================================
+function postToDiigo($apiKey, $username, $password, $keyword, $targetSite) {
+    if (empty($apiKey) || empty($username) || empty($password)) {
+        return ['error' => 'Diigo requires an API key, username, and password.'];
+    }
+    if (!filter_var($targetSite, FILTER_VALIDATE_URL) || strlen($targetSite) > 250) {
+        return ['error' => 'Diigo requires a valid target URL no longer than 250 characters.'];
+    }
+
+    $keyword = trim($keyword) ?: 'Useful resource';
+    $title = mb_substr('Useful resource: ' . $keyword, 0, 250, 'UTF-8');
+    $description = mb_substr('Resource related to ' . $keyword . '.', 0, 250, 'UTF-8');
+    $tags = mb_substr(preg_replace('/[^a-zA-Z0-9,_-]/', '', str_replace(' ', ',', $keyword)), 0, 250, 'UTF-8');
+    if ($tags === '') {
+        $tags = 'resource';
+    }
+
+    $url = 'https://secure.diigo.com/api/v2/bookmarks?' . http_build_query(['key' => $apiKey]);
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST           => true,
+        CURLOPT_POSTFIELDS     => http_build_query([
+            'title'  => $title,
+            'url'    => $targetSite,
+            'shared' => 'yes',
+            'tags'   => $tags,
+            'desc'   => $description,
+        ]),
+        CURLOPT_USERPWD        => $username . ':' . $password,
+        CURLOPT_HTTPAUTH       => CURLAUTH_BASIC,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
+        CURLOPT_TIMEOUT        => 20,
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($response === false || $error !== '') {
+        return ['error' => 'Diigo API request failed: ' . ($error ?: 'No response received.')];
+    }
+
+    $result = json_decode($response, true);
+    if ($httpCode !== 200 || empty($result['message']) || stripos($result['message'], 'added') === false) {
+        return ['error' => 'Diigo rejected the bookmark (HTTP ' . $httpCode . '): ' . ($result['message'] ?? trim($response))];
+    }
+
+    return [
+        'success'    => true,
+        'url'        => 'https://www.diigo.com/user/' . rawurlencode($username),
+        'source'     => 'Diigo API',
+        'post_title' => $title,
+    ];
+}
+
+// ============================================================
 // JUSTPASTE.IT — REST API with email+password session
 // POST /api/article → returns public URL
 // ============================================================
+function justPasteJson(string $url, $fields, string $cookieFile, bool $post = true): array {
+    $ch = curl_init($url);
+    $headers = [
+        'Accept: application/json, text/plain, */*',
+        'Content-Type: application/json',
+        'Origin: https://justpaste.it',
+        'Referer: https://justpaste.it/',
+        'X-Requested-With: XMLHttpRequest',
+    ];
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_COOKIEFILE     => $cookieFile,
+        CURLOPT_COOKIEJAR      => $cookieFile,
+        CURLOPT_USERAGENT      => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+        CURLOPT_HTTPHEADER     => $headers,
+        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_SSL_VERIFYPEER => false,
+    ];
+    if ($post) {
+        $opts[CURLOPT_POST] = true;
+        $opts[CURLOPT_POSTFIELDS] = is_string($fields) ? $fields : json_encode($fields);
+    }
+    curl_setopt_array($ch, $opts);
+    $resp = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+    $json = json_decode($resp ?: '', true);
+    return ['body' => $resp ?: '', 'json' => is_array($json) ? $json : [], 'code' => $code, 'error' => $err];
+}
+
 function postToJustPaste($username, $password, $keyword, $targetSite, $openaiKey) {
     if (empty($username) || empty($password))
         return ['error' => 'JustPaste.it: Add email + password credentials.'];
 
     $ai    = generateAIContent($keyword, $targetSite, 'justpaste', 'blog_post', '', $openaiKey, $postCount ?? 1, $usedTitles ?? []);
-    $text  = strip_tags($ai['content'] ?? '');
-    if (empty($text)) $text = "Best {$keyword} guide. Learn more: {$targetSite}";
+    $text  = trim(strip_tags($ai['content'] ?? ''));
+    if ($text === '') $text = "Best {$keyword} guide. Learn more: {$targetSite}";
     $title = $ai['title'] ?? generateUniqueTitle($keyword, $postCount ?? 1, [], OPENAI_API_KEY);
+    $title = mb_substr(trim(preg_replace('/[^\x20-\x7E]/', '', (string)$title)), 0, 120);
+    if ($title === '') $title = 'Guide to ' . $keyword;
+
+    $paras = '';
+    foreach (preg_split('/\n+/', $text) as $line) {
+        $line = trim($line);
+        if ($line !== '') $paras .= '<p>' . htmlspecialchars($line, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '</p>';
+    }
+    $html = $paras . '<p>Learn more: <a href="' . htmlspecialchars($targetSite, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '">' . htmlspecialchars($targetSite, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '</a></p>';
 
     $sess = curlSession();
     $cf   = $sess['cookie'];
+    curlGet('https://justpaste.it/login', $cf);
 
-    // Step 1: Get homepage + CSRF token
-    $home  = curlGet('https://justpaste.it', $cf);
-    $csrf  = extractToken($home, '_csrf_token') ?: extractToken($home, 'csrf_token') ?: '';
-
-    // Step 2: Login
-    $loginResp = curlPost('https://justpaste.it/login', [
-        '_username'    => $username,
-        '_password'    => $password,
-        '_csrf_token'  => $csrf,
-        '_remember_me' => 'on',
+    $login = justPasteJson('https://justpaste.it/api/v1/login', [
+        'email'      => $username,
+        'password'   => $password,
+        'rememberMe' => true,
     ], $cf);
 
-    // Step 3: Get article create page for CSRF
-    $newPage = curlGet('https://justpaste.it/new', $cf);
-    $csrf2   = extractToken($newPage, '_csrf_token') ?: $csrf;
-
-    // Step 4: Publish article
-    $content  = $title . "\n\n" . $text . "\n\nLearn more: " . $targetSite;
-    $postResp = curlPost('https://justpaste.it/new', [
-        'article[title]'         => $title,
-        'article[content]'       => $content,
-        'article[visibilityType]'=> 'public',
-        'article[isListed]'      => '1',
-        '_csrf_token'            => $csrf2,
-        'article[save]'          => 'Save',
-    ], $cf);
-
-    @unlink($cf);
-
-    // Check redirect URL or page content for slug
-    if ($postResp['code'] === 200 || $postResp['code'] === 302) {
-        // Try to extract article URL from response
-        if (preg_match('|https://justpaste\.it/([a-zA-Z0-9_-]+)|', $postResp['body'], $m)) {
-            $slug = $m[1];
-            if ($slug !== 'new' && $slug !== 'login' && strlen($slug) >= 3) {
-                return ['success' => true, 'url' => 'https://justpaste.it/' . $slug, 'source' => $ai['source'] ?? 'AI'];
-            }
-        }
-        // Success assumed — return profile
-        return ['success' => true, 'url' => 'https://justpaste.it/u/' . $username, 'source' => $ai['source'] ?? 'AI'];
+    if ($login['code'] === 403 || $login['code'] === 429) {
+        @unlink($cf);
+        $detail = $login['json']['detail'] ?? $login['json']['message'] ?? ('HTTP ' . $login['code']);
+        return ['error' => 'JustPaste.it login failed: ' . $detail];
+    }
+    if ($login['code'] !== 200) {
+        @unlink($cf);
+        return ['error' => 'JustPaste.it login failed (HTTP ' . $login['code'] . ').'];
     }
 
+    $created = justPasteJson('https://justpaste.it/api/v1/new-article', new stdClass(), $cf);
+    $article = $created['json']['article'] ?? [];
+    $articleId = $article['id'] ?? ($created['json']['articleId'] ?? null);
+    $secureCode = $article['secureCode'] ?? ($created['json']['secureCode'] ?? null);
+    $path = $article['path'] ?? ($created['json']['path'] ?? '');
+    if ($created['code'] !== 200 || empty($articleId) || empty($secureCode)) {
+        @unlink($cf);
+        $detail = $created['json']['detail'] ?? ('HTTP ' . $created['code']);
+        return ['error' => 'JustPaste.it could not start a new note: ' . $detail];
+    }
+
+    $save = justPasteJson('https://justpaste.it/api/v1/save-article', [
+        'articleId'                  => $articleId,
+        'secureCode'                 => $secureCode,
+        'content'                    => $html,
+        'captcha'                    => '',
+        'secureToken'                => '',
+        'path'                       => $path,
+        'visibilityLevel'            => 'public',
+        'password'                   => '',
+        'repeatPassword'             => '',
+        'tags'                       => [],
+        'sharedUsers'                => [],
+        'title'                      => $title,
+        'linkSharingAllowed'         => true,
+        'description'                => mb_substr($text, 0, 180),
+        'articleViewRequiresCaptcha' => false,
+        'hideViews'                  => false,
+        'anonymizeOwner'             => false,
+        'expireAfterDate'            => null,
+        'expireAfterRead'            => false,
+        'isLoggedUser'               => true,
+        'tz'                         => 'Asia/Kolkata',
+        'sH'                         => 1080,
+        'sW'                         => 1920,
+    ], $cf);
+    @unlink($cf);
+
+    $data = $save['json'];
+    if (($data['action'] ?? '') === 'captcha') {
+        return [
+            'manual'  => true,
+            'message' => 'JustPaste.it asked for a captcha. Open justpaste.it, login, and paste the article once.',
+            'title'   => $title,
+            'content' => $text,
+            'url'     => 'https://justpaste.it',
+            'source'  => $ai['source'] ?? 'AI',
+        ];
+    }
+    if (($data['action'] ?? '') === 'redirect' && !empty($data['url'])) {
+        $url = $data['url'];
+        if (strpos($url, 'http') !== 0) $url = 'https://justpaste.it' . $url;
+        return ['success' => true, 'url' => $url, 'source' => $ai['source'] ?? 'AI', 'post_title' => $title];
+    }
+    if (!empty($data['url']) && $save['code'] === 200) {
+        $url = $data['url'];
+        if (strpos($url, 'http') !== 0) $url = 'https://justpaste.it' . $url;
+        return ['success' => true, 'url' => $url, 'source' => $ai['source'] ?? 'AI', 'post_title' => $title];
+    }
+    if ($path && $save['code'] === 200 && ($data['action'] ?? '') !== 'error') {
+        return ['success' => true, 'url' => 'https://justpaste.it/' . ltrim($path, '/'), 'source' => $ai['source'] ?? 'AI', 'post_title' => $title];
+    }
+
+    $detail = $data['detail'] ?? $data['message'] ?? ('HTTP ' . $save['code']);
     return [
         'manual'  => true,
-        'message' => 'JustPaste.it session failed. Post manually.',
+        'message' => 'JustPaste.it publish failed: ' . $detail,
         'title'   => $title,
         'content' => $text,
         'url'     => 'https://justpaste.it',
@@ -2757,39 +3022,223 @@ function postToJustPaste($username, $password, $keyword, $targetSite, $openaiKey
     ];
 }
 
+function meweExtractSessionParts(string $sessionToken): array {
+    $access = '';
+    $csrf = '';
+    $refresh = '';
+    $cookieHeader = $sessionToken;
+    if (preg_match('/(?:^|;\s*)access-token=([^;]+)/', $sessionToken, $m)) {
+        $access = urldecode($m[1]);
+    }
+    if (preg_match('/(?:^|;\s*)csrf-token=([^;]+)/', $sessionToken, $m)) {
+        $csrf = urldecode($m[1]);
+    }
+    if (preg_match('/(?:^|;\s*)refresh-token=([^;]+)/', $sessionToken, $m)) {
+        $refresh = urldecode($m[1]);
+    }
+    if (strpos($sessionToken, '=') === false) {
+        $access = $sessionToken;
+        $cookieHeader = '';
+    }
+    $userId = '';
+    $exp = 0;
+    if ($access !== '' && substr_count($access, '.') === 2) {
+        $parts = explode('.', $access);
+        $payload = json_decode(base64_decode(strtr($parts[1], '-_', '+/')), true) ?: [];
+        $userId = (string)($payload['sub'] ?? '');
+        $exp = (int)($payload['exp'] ?? 0);
+    }
+    return [
+        'access' => $access,
+        'csrf' => $csrf,
+        'refresh' => $refresh,
+        'cookie' => $cookieHeader,
+        'userId' => $userId,
+        'exp' => $exp,
+    ];
+}
+
+function meweSessionHeaders(array $parts, string $authStyle = 'sgrouples'): array {
+    $headers = [
+        'Accept: application/json, application/hal+json, */*',
+        'Origin: https://mewe.com',
+        'Referer: https://mewe.com/',
+    ];
+    if (($parts['cookie'] ?? '') !== '' && strpos($parts['cookie'], '=') !== false) {
+        $headers[] = 'Cookie: ' . $parts['cookie'];
+    }
+    $access = $parts['access'] ?? '';
+    if ($access !== '') {
+        if ($authStyle === 'bearer') {
+            $headers[] = 'Authorization: Bearer ' . $access;
+        } else {
+            $headers[] = 'Authorization: Sgrouples accessToken= ' . $access;
+        }
+    }
+    if (($parts['csrf'] ?? '') !== '') {
+        $headers[] = 'x-csrf-token: ' . $parts['csrf'];
+    }
+    return $headers;
+}
+
+function meweExtractPostUrl(array $postData): string {
+    $id = $postData['postId'] ?? $postData['id'] ?? $postData['post']['postItemId'] ?? $postData['postItemId'] ?? $postData['post']['id'] ?? '';
+    $url = $postData['url'] ?? $postData['post']['url'] ?? $postData['permalink'] ?? $postData['post']['permalink'] ?? '';
+    if (is_string($url) && strpos($url, 'http') === 0 && strpos($url, '/post/') === false) {
+        return $url;
+    }
+    if (is_string($url) && strpos($url, 'http') === 0 && strpos($url, '/post/show/') !== false) {
+        return $url;
+    }
+    if ($id !== '') {
+        return 'https://mewe.com/post/show/' . rawurlencode((string)$id);
+    }
+    return 'https://mewe.com/myworld';
+}
+
+function mewePostWithSession(string $sessionToken, string $message, ?string $title = null): array {
+    $parts = meweExtractSessionParts($sessionToken);
+    if ($parts['access'] === '' && $parts['cookie'] === '') {
+        return ['error' => 'MeWe session Cookie missing access-token.'];
+    }
+    if ($parts['refresh'] !== '') {
+        $refreshHeaders = meweSessionHeaders($parts, 'sgrouples');
+        $refreshUrl = 'https://mewe.com/api/v2/auth/token?' . http_build_query(['refreshToken' => $parts['refresh']]);
+        $ch = curl_init($refreshUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HTTPGET => true,
+            CURLOPT_HTTPHEADER => $refreshHeaders,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+        ]);
+        $refreshBody = curl_exec($ch) ?: '';
+        $refreshCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $refreshData = json_decode($refreshBody, true) ?: [];
+        $newAccess = $refreshData['accessToken'] ?? $refreshData['access-token'] ?? $refreshData['token'] ?? '';
+        if ($refreshCode >= 200 && $refreshCode < 300 && $newAccess !== '') {
+            $parts['access'] = $newAccess;
+        }
+    }
+    $probeOk = false;
+    foreach (['sgrouples', 'bearer'] as $style) {
+        $headers = meweSessionHeaders($parts, $style);
+        $info = curlPost('https://mewe.com/api/v2/me/info', new stdClass(), '', $headers, true);
+        if ($info['code'] === 405 || $info['code'] === 404) {
+            $ch = curl_init('https://mewe.com/api/v2/me/info');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_HTTPGET => true,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_TIMEOUT => 20,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+            ]);
+            $body = curl_exec($ch) ?: '';
+            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $info = ['body' => $body, 'code' => $code];
+        }
+        if ($info['code'] >= 200 && $info['code'] < 300) {
+            $probeOk = true;
+            $infoData = json_decode($info['body'], true) ?: [];
+            if (($parts['userId'] ?? '') === '') {
+                $parts['userId'] = (string)($infoData['id'] ?? $infoData['userId'] ?? $infoData['user']['id'] ?? '');
+            }
+            break;
+        }
+    }
+    $payloads = [
+        ['text' => $message, 'imageIds' => [], 'existingFileIds' => [], 'mediaIds' => [], 'public' => true, 'closeFriends' => false],
+        ['text' => $message, 'public' => true],
+        ['text' => $message],
+    ];
+    $endpoints = [
+        'https://mewe.com/api/v2/home/post',
+        'https://mewe.com/api/v2/home/user/post',
+        'https://mewe.com/api/v1/feed',
+    ];
+    if (($parts['userId'] ?? '') !== '') {
+        array_unshift($endpoints, 'https://mewe.com/api/v2/home/user/' . rawurlencode($parts['userId']) . '/post');
+    }
+    foreach (['sgrouples', 'bearer'] as $style) {
+        $headers = meweSessionHeaders($parts, $style);
+        foreach ($endpoints as $ep) {
+            foreach ($payloads as $payload) {
+                $post = curlPost($ep, $payload, '', $headers, true);
+                $postData = json_decode($post['body'], true) ?: [];
+                $id = $postData['postId'] ?? $postData['id'] ?? $postData['post']['postItemId'] ?? $postData['postItemId'] ?? $postData['post']['id'] ?? '';
+                if ($post['code'] >= 200 && $post['code'] < 300 && ($id !== '' || $post['code'] === 204 || trim($post['body']) === '')) {
+                    return [
+                        'success' => true,
+                        'url' => meweExtractPostUrl($postData),
+                        'source' => 'MeWe session',
+                        'post_title' => $title,
+                    ];
+                }
+            }
+        }
+    }
+    if (!$probeOk) {
+        return ['error' => 'MeWe session expired. Paste a fresh Cookie from a mewe.com/api request (not Mixpanel).'];
+    }
+    return ['error' => 'MeWe session authenticated but the post API rejected the request.'];
+}
+
 // ============================================================
 // MEWE.COM — REST API with email+password (cookie session)
-// POST /api/v1/feed → public post with backlink
+// POST /api/v2/home/post → public post with backlink
 // ============================================================
-function postToMeWe($username, $password, $keyword, $targetSite, $openaiKey) {
-    if (empty($username) || empty($password))
-        return ['error' => 'MeWe: Add email + password credentials.'];
-
+function postToMeWe($username, $password, $keyword, $targetSite, $openaiKey, $sessionToken = '') {
     $ai      = generateAIContent($keyword, $targetSite, 'mewe', 'micro_blog', '', $openaiKey, $postCount ?? 1, $usedTitles ?? []);
     $message = strip_tags($ai['content'] ?? '');
     if (empty($message)) $message = "Best {$keyword} training. Learn more: {$targetSite}";
     $message = mb_substr($message, 0, 1500) . "\n\n" . $targetSite;
 
+    $sessionToken = trim((string)$sessionToken);
+    if ($sessionToken !== '') {
+        $posted = mewePostWithSession($sessionToken, $message, $ai['title'] ?? null);
+        if (!empty($posted['success'])) {
+            return $posted;
+        }
+        return [
+            'error' => $posted['error'] ?? 'MeWe session invalid or expired. Open mewe.com logged in, F12 → Network → any mewe.com/api request → copy Cookie (not Mixpanel mp.mewe.com/track) into API Key, then Auto Post again.',
+        ];
+    }
+
+    if (empty($username) || empty($password))
+        return ['error' => 'MeWe: Add email + password, or paste a session token in API Key.'];
+
     $sess = curlSession();
     $cf   = $sess['cookie'];
 
-    // Step 1: Get CSRF token
-    $home  = curlGet('https://mewe.com', $cf);
-    $csrf  = '';
-    if (preg_match('/csrfToken["\s:]+["\']([^"\']+)["\']/', $home, $m)) $csrf = $m[1];
-
-    // Step 2: Login via API
-    $loginResp = curlPost('https://mewe.com/api/v1/auth/login', [
-        'email'    => $username,
+    curlGet('https://mewe.com/login', $cf);
+    $loginHeaders = [
+        'Accept: application/hal+json, application/json, */*',
+        'Origin: https://mewe.com',
+        'Referer: https://mewe.com/login/',
+    ];
+    $loginResp = curlPost('https://mewe.com/api/v2/auth/login', [
+        'username' => $username,
         'password' => $password,
-        'remember' => true,
-    ], $cf, ['x-csrf-token: ' . $csrf], true);
-
-    $loginData = json_decode($loginResp['body'], true);
-    // Extract fresh CSRF from login response
-    if (!empty($loginData['_csrf'])) $csrf = $loginData['_csrf'];
-
-    if ($loginResp['code'] !== 200 || empty($loginData['id'])) {
+    ], $cf, $loginHeaders, true);
+    $loginData = json_decode($loginResp['body'], true) ?: [];
+    if ($loginResp['code'] < 200 || $loginResp['code'] >= 300 || !empty($loginData['message'])) {
+        $loginResp = curlPost(
+            'https://mewe.com/api/v2/auth/login?' . http_build_query(['username' => $username, 'password' => $password]),
+            new stdClass(),
+            $cf,
+            $loginHeaders,
+            true
+        );
+        $loginData = json_decode($loginResp['body'], true) ?: [];
+    }
+    $csrf = (string)($loginData['_csrf'] ?? '');
+    $loggedIn = ($loginResp['code'] >= 200 && $loginResp['code'] < 300)
+        && (empty($loginData['message']) || !empty($loginData['id']) || !empty($loginData['user']) || !empty($loginData['accessToken']));
+    if (!$loggedIn) {
         @unlink($cf);
         return [
             'manual'  => true,
@@ -2812,7 +3261,7 @@ function postToMeWe($username, $password, $keyword, $targetSite, $openaiKey) {
     $postData = json_decode($postResp['body'], true);
     if (!empty($postData['postId']) || !empty($postData['id'])) {
         $id  = $postData['postId'] ?? $postData['id'] ?? '';
-        return ['success' => true, 'url' => 'https://mewe.com/i/' . $username, 'source' => $ai['source'] ?? 'AI'];
+        return ['success' => true, 'url' => 'https://mewe.com/', 'source' => $ai['source'] ?? 'AI'];
     }
 
     return [
@@ -2820,7 +3269,7 @@ function postToMeWe($username, $password, $keyword, $targetSite, $openaiKey) {
         'message' => 'MeWe post failed. Copy content and post manually.',
         'title'   => ucwords($keyword) . ' Training',
         'content' => $message,
-        'url'     => 'https://mewe.com/newsfeed',
+        'url'     => 'https://mewe.com/',
         'source'  => $ai['source'] ?? 'AI',
     ];
 }
@@ -3886,21 +4335,41 @@ function runPlatformAutoPost(string $platform, array $creds, array $project, int
         case 'gifyu':
             return postToGifyu($username, base64_decode($creds['password'] ?? '') ?: ($creds['password'] ?? ''), $keyword, $site, OPENAI_API_KEY);
         case 'instapaper': {
-            $pass = base64_decode($creds['password'] ?? '') ?: ($creds['password'] ?? '');
-            $r = postToInstapaper($username, $pass, $keyword, $site, OPENAI_API_KEY);
-            if (!empty($r['success'])) return $r;
-            return seleniumMicroBlog('instapaper', $creds, $keyword, $site, '', '', $projectId);
+            $rawPass = $creds['password'] ?? '';
+            $ipPass = base64_decode($rawPass, true);
+            if ($ipPass === false || $ipPass === '') $ipPass = $rawPass;
+            return postToInstapaper($username, $ipPass, $keyword, $site, OPENAI_API_KEY);
         }
         case 'livejournal':
             // Try dedicated script first (profile-based, more reliable)
             return seleniumLiveJournalPlaywright($creds, $keyword, $site, $projectId);
-        case 'justpaste':
-            return postToJustPaste($username, base64_decode($creds['password'] ?? '') ?: ($creds['password'] ?? ''), $keyword, $site, OPENAI_API_KEY);
+        case 'diigo':
+            $rawPass = $creds['password'] ?? '';
+            $password = base64_decode($rawPass, true);
+            if ($password === false || $password === '') {
+                $password = $rawPass;
+            }
+            return postToDiigo($apiKey, $username, $password, $keyword, $site);
+        case 'justpaste': {
+            $rawPass = $creds['password'] ?? '';
+            $jpPass = base64_decode($rawPass, true);
+            if ($jpPass === false || $jpPass === '') $jpPass = $rawPass;
+            return postToJustPaste($username, $jpPass, $keyword, $site, OPENAI_API_KEY);
+        }
         case 'mewe': {
-            $pass = base64_decode($creds['password'] ?? '') ?: ($creds['password'] ?? '');
-            $r = postToMeWe($username, $pass, $keyword, $site, OPENAI_API_KEY);
-            if (!empty($r['success'])) return $r;
-            return seleniumMicroBlog('mewe', $creds, $keyword, $site, '', '', $projectId);
+            $rawPass = $creds['password'] ?? '';
+            $mwPass = base64_decode($rawPass, true);
+            if ($mwPass === false || $mwPass === '') $mwPass = $rawPass;
+            $session = trim((string)($creds['api_key'] ?? ''));
+            if ($session === '') {
+                $session = trim((string)($creds['api_secret'] ?? ''));
+            }
+            $aiC = generateAIContent($keyword, $site, 'mewe', 'micro_blog', '', OPENAI_API_KEY, $postCount, $usedTitles, $project['business_name'] ?? '', $project['business_desc'] ?? '');
+            if ($session !== '') {
+                $r = postToMeWe($username, $mwPass, $keyword, $site, OPENAI_API_KEY, $session);
+                if (!empty($r['success'])) return $r;
+            }
+            return seleniumMicroBlog('mewe', $creds, $keyword, $site, $aiC['title'] ?? '', strip_tags($aiC['content'] ?? ''), $projectId);
         }
         case 'scoopit': {
             // Generate AI content → show manual modal with Scoop.it new post URL
@@ -4128,5 +4597,3 @@ if ($isDirectRequest) {
     header('Content-Type: application/json');
     echo json_encode($result);
 }
-?>
-

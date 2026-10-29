@@ -10,7 +10,8 @@ $checks[] = ['PHP 8.0+', PHP_VERSION, $phpOk];
 if (!$phpOk) $ok = false;
 
 // Extensions
-foreach (['pdo_mysql', 'curl', 'json', 'mbstring', 'dom'] as $ext) {
+$dbExt = (defined('DB_TYPE') && DB_TYPE === 'sqlite') ? 'pdo_sqlite' : 'pdo_mysql';
+foreach ([$dbExt, 'curl', 'json', 'mbstring', 'dom'] as $ext) {
     $has = extension_loaded($ext);
     $checks[] = ["Extension: $ext", $has ? 'OK' : 'Missing', $has];
     if (!$has) $ok = false;
@@ -37,7 +38,7 @@ try {
     $db = getDB();
     $db->query('SELECT 1');
     $dbOk = true;
-    $dbMsg = 'Connected to ' . DB_NAME;
+    $dbMsg = (defined('DB_TYPE') && DB_TYPE === 'sqlite') ? 'Connected to SQLite (' . basename(DB_SQLITE_PATH) . ')' : 'Connected to ' . DB_NAME;
 
     $tables = ['users', 'projects', 'social_accounts', 'project_meta', 'backlinks', 'keywords', 'seo_reports', 'backlink_queue'];
     foreach ($tables as $t) {
@@ -102,8 +103,9 @@ $siteUrl = SITE_URL;
           <a href="api-setup.php" class="btn btn-outline-primary">API Keys</a>
         <?php else: ?>
           <a href="index.php" class="btn btn-primary">Login</a>
-          <a href="register.php" class="btn btn-outline-secondary">Register</a>
+          <a href="reset-all.php" class="btn btn-danger"><i class="fas fa-trash-restore me-1"></i>Reset DB & Create Superuser</a>
         <?php endif; ?>
+        <a href="reset-all.php" class="btn btn-outline-danger ms-auto btn-sm align-self-center"><i class="fas fa-redo me-1"></i>Reset Database</a>
       </div>
 
       <hr>

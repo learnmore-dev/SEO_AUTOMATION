@@ -75,13 +75,26 @@ try {
 // 3. Kill hung Chrome / Playwright node driver processes
 if (!$isTaskProcessing) {
     echo "No tasks currently processing. Cleaning up all leftover Chrome & Playwright driver processes...\n";
-    @exec("pkill -9 -f 'chrome' 2>/dev/null");
-    @exec("pkill -9 -f 'chromedriver' 2>/dev/null");
-    @exec("pkill -9 -f 'playwright' 2>/dev/null");
+    if (DIRECTORY_SEPARATOR === '\\') {
+        @exec("taskkill /F /IM chrome.exe /T 2>NUL");
+        @exec("taskkill /F /IM chromedriver.exe /T 2>NUL");
+    } else {
+        @exec("pkill -9 -f 'chrome' 2>/dev/null");
+        @exec("pkill -9 -f 'chromedriver' 2>/dev/null");
+        @exec("pkill -9 -f 'playwright' 2>/dev/null");
+    }
 } else {
     echo "A task is currently processing. Cleaning up stale lock files...\n";
     // Check if task is older than 3 minutes, then kill
-    @exec("find /var/www/html/logs/ -name 'cron_worker.lock' -mmin +3 -delete 2>/dev/null");
+    if (DIRECTORY_SEPARATOR === '\\') {
+        // Stale locks on windows
+        $lockFile = __DIR__ . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'cron_worker.lock';
+        if (file_exists($lockFile) && (time() - filemtime($lockFile) > 180)) {
+            @unlink($lockFile);
+        }
+    } else {
+        @exec("find /var/www/html/logs/ -name 'cron_worker.lock' -mmin +3 -delete 2>/dev/null");
+    }
 }
 
 echo "[" . date('Y-m-d H:i:s') . "] Cleanup complete.\n";

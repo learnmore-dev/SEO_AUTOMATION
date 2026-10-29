@@ -54,6 +54,17 @@ Rules:
 - Random seed: {$seed}{$avoidBlock}";
 
     $provider = defined('PRIMARY_AI_PROVIDER') ? PRIMARY_AI_PROVIDER : 'auto';
+    $groqKey = defined('GROQ_API_KEY') ? GROQ_API_KEY : '';
+    if (($provider === 'groq' || $provider === 'auto') && !empty($groqKey)) {
+        $groqTitle = generateWithGroq($prompt, $groqKey);
+        if ($groqTitle) {
+            $title = trim(trim($groqTitle), '"\'');
+            if (!empty($title) && strlen($title) > 10 && strlen($title) < 200) {
+                return $title;
+            }
+        }
+    }
+
     $deepseekKey = defined('DEEPSEEK_API_KEY') ? DEEPSEEK_API_KEY : '';
 
     if (($provider === 'deepseek' || $provider === 'auto') && !empty($deepseekKey) && strpos($deepseekKey, 'sk-') === 0) {
@@ -266,7 +277,10 @@ if (!function_exists('generateWithGemini')) {
 function generateWithAI(string $prompt): array {
     $provider = defined('PRIMARY_AI_PROVIDER') ? PRIMARY_AI_PROVIDER : 'auto';
 
-    if ($provider === 'deepseek') {
+    if ($provider === 'groq') {
+        $content = generateWithGroq($prompt);
+        if ($content) return ['text' => $content, 'source' => 'Groq'];
+    } elseif ($provider === 'deepseek') {
         $content = generateWithDeepSeek($prompt);
         if ($content) return ['text' => $content, 'source' => 'DeepSeek'];
     } elseif ($provider === 'gemini') {
@@ -278,6 +292,11 @@ function generateWithAI(string $prompt): array {
     }
 
     // Default / Auto / Fallback chain
+    if (hasGroq()) {
+        $content = generateWithGroq($prompt);
+        if ($content) return ['text' => $content, 'source' => 'Groq'];
+    }
+
     $content = generateWithDeepSeek($prompt);
     if ($content) return ['text' => $content, 'source' => 'DeepSeek'];
 
@@ -508,9 +527,13 @@ Platform: {$platform}. Post variation #{$postCount}. Random seed: {$randomSeed}.
     $content = null;
     $source = 'Template';
     $provider = defined('PRIMARY_AI_PROVIDER') ? PRIMARY_AI_PROVIDER : 'auto';
+    $groqKey = defined('GROQ_API_KEY') ? GROQ_API_KEY : '';
     $deepseekKey = defined('DEEPSEEK_API_KEY') ? DEEPSEEK_API_KEY : '';
 
-    if ($provider === 'deepseek' && !empty($deepseekKey)) {
+    if ($provider === 'groq' && !empty($groqKey)) {
+        $content = generateWithGroq($prompt, $groqKey);
+        if ($content) $source = 'Groq';
+    } elseif ($provider === 'deepseek' && !empty($deepseekKey)) {
         $content = generateWithDeepSeek($prompt, $deepseekKey);
         if ($content) $source = 'DeepSeek';
     } elseif ($provider === 'gemini' && !empty($geminiKey)) {
@@ -522,6 +545,11 @@ Platform: {$platform}. Post variation #{$postCount}. Random seed: {$randomSeed}.
     }
 
     // Default / Auto / Fallback chain if primary is auto or failed
+    if (!$content && !empty($groqKey)) {
+        $content = generateWithGroq($prompt, $groqKey);
+        if ($content) $source = 'Groq';
+    }
+
     if (!$content && !empty($deepseekKey) && strpos($deepseekKey, 'sk-') === 0) {
         $content = generateWithDeepSeek($prompt, $deepseekKey);
         if ($content) $source = 'DeepSeek';
