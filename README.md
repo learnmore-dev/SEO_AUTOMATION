@@ -4,6 +4,28 @@
 
 ## Quick Setup
 
+### Run with Docker
+
+Requirements: Docker Engine and the Docker Compose plugin.
+
+1. Copy `.env.example` to `.env` and add any API keys you use.
+2. Start the app:
+
+   ```bash
+   docker compose up --build -d
+   ```
+
+3. Open [http://localhost:8080](http://localhost:8080). Set `APP_PORT` in `.env`
+   to use a different host port.
+
+The SQLite database, uploads, logs, and `config.local.php` are stored in named
+Docker volumes and remain available when the container is recreated. The
+database is initialized automatically on first use. Configure API keys in `.env`
+or through the app's settings. A fresh database uses the application's default
+admin credentials (`admin` / `admin123`); change the password immediately and
+before exposing the app publicly. Browser-based Selenium posting still requires
+its separate Python/browser environment or PC agent.
+
 ### 1. Database
 ```sql
 -- Import database.sql in phpMyAdmin or run:
