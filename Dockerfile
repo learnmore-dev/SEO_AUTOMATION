@@ -10,7 +10,7 @@ RUN apt-get update \
         libxml2-dev \
         libzip-dev \
     && docker-php-ext-configure gd --with-jpeg --with-webp \
-    && docker-php-ext-install -j"$(nproc)" curl fileinfo gd mbstring mysqli pdo_mysql pdo_sqlite xml zip \
+    && docker-php-ext-install -j"$(nproc)" curl fileinfo gd mbstring mysqli pdo_mysql xml zip \
     && a2enmod headers rewrite \
     && rm -rf /var/lib/apt/lists/*
 
