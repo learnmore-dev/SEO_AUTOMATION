@@ -1,4 +1,5 @@
 .git
+php.ini
 .env
 .env.*
 config.local.php

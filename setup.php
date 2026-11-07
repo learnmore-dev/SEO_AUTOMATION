@@ -10,7 +10,12 @@ $checks[] = ['PHP 8.0+', PHP_VERSION, $phpOk];
 if (!$phpOk) $ok = false;
 
 // Extensions
-$dbExt = (defined('DB_TYPE') && DB_TYPE === 'sqlite') ? 'pdo_sqlite' : 'pdo_mysql';
+$dbType = strtolower((string)(defined('DB_TYPE') ? DB_TYPE : 'sqlite'));
+$dbExt = match (true) {
+    $dbType === 'sqlite' => 'pdo_sqlite',
+    in_array($dbType, ['pgsql', 'postgres', 'postgresql'], true) => 'pdo_pgsql',
+    default => 'pdo_mysql',
+};
 foreach ([$dbExt, 'curl', 'json', 'mbstring', 'dom'] as $ext) {
     $has = extension_loaded($ext);
     $checks[] = ["Extension: $ext", $has ? 'OK' : 'Missing', $has];
@@ -38,11 +43,13 @@ try {
     $db = getDB();
     $db->query('SELECT 1');
     $dbOk = true;
-    $dbMsg = (defined('DB_TYPE') && DB_TYPE === 'sqlite') ? 'Connected to SQLite (' . basename(DB_SQLITE_PATH) . ')' : 'Connected to ' . DB_NAME;
+    $dbMsg = (defined('DB_TYPE') && DB_TYPE === 'sqlite')
+        ? 'Connected to SQLite (' . basename(DB_SQLITE_PATH) . ')'
+        : 'Connected to ' . DB_NAME . ' (' . DB_TYPE . ')';
 
     $tables = ['users', 'projects', 'social_accounts', 'project_meta', 'backlinks', 'keywords', 'seo_reports', 'backlink_queue'];
     foreach ($tables as $t) {
-        $db->query("SELECT 1 FROM `$t` LIMIT 1");
+        $db->query("SELECT 1 FROM {$t} LIMIT 1");
         $checks[] = ["Table: $t", 'OK', true];
     }
 } catch (Throwable $e) {

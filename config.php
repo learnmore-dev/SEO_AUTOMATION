@@ -256,6 +256,338 @@ function initSqliteDatabase(PDO $pdo, string $superUser = 'admin', string $super
     }
 }
 
+function initMysqlDatabase(PDO $pdo, string $superUser = 'admin', string $superPass = 'admin123', string $superEmail = 'admin@skyrank.com'): void {
+    $schema = "
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      username VARCHAR(191) NOT NULL UNIQUE,
+      password VARCHAR(255) NOT NULL,
+      email VARCHAR(191) NOT NULL UNIQUE,
+      role VARCHAR(50) DEFAULT 'admin',
+      api_key VARCHAR(255) DEFAULT NULL,
+      allowed_menus TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS projects (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      website_url VARCHAR(1000) NOT NULL,
+      target_keyword TEXT NOT NULL,
+      target_site TEXT DEFAULT NULL,
+      package_type VARCHAR(50) DEFAULT 'basic',
+      business_name VARCHAR(255) DEFAULT '',
+      business_address TEXT DEFAULT NULL,
+      business_hours TEXT DEFAULT NULL,
+      business_desc TEXT DEFAULT NULL,
+      contact_name VARCHAR(255) DEFAULT '',
+      phone VARCHAR(50) DEFAULT '',
+      email VARCHAR(255) DEFAULT '',
+      gsc_access TEXT DEFAULT NULL,
+      ga_access TEXT DEFAULT NULL,
+      google_ads_id VARCHAR(100) DEFAULT NULL,
+      admin_url VARCHAR(255) DEFAULT '',
+      admin_user VARCHAR(255) DEFAULT '',
+      admin_pass TEXT DEFAULT NULL,
+      competitor_sites TEXT DEFAULT NULL,
+      post_image VARCHAR(255) DEFAULT NULL,
+      seo_score INT DEFAULT NULL,
+      pagespeed_score INT DEFAULT NULL,
+      pagespeed_mobile_score INT DEFAULT NULL,
+      pagespeed_desktop_score INT DEFAULT NULL,
+      pagespeed_metrics_json LONGTEXT DEFAULT NULL,
+      pagespeed_checked_at DATETIME DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS social_accounts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      project_id INT NOT NULL DEFAULT 0,
+      platform VARCHAR(64) NOT NULL,
+      username VARCHAR(255) NOT NULL,
+      password TEXT DEFAULT NULL,
+      api_key TEXT DEFAULT NULL,
+      api_secret TEXT DEFAULT NULL,
+      refresh_token TEXT DEFAULT NULL,
+      status VARCHAR(32) DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS backlinks (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      backlink_url VARCHAR(1000) NOT NULL,
+      platform VARCHAR(64) NOT NULL,
+      da_score INT DEFAULT 70,
+      status VARCHAR(32) DEFAULT 'created',
+      verified_status VARCHAR(32) DEFAULT 'unverified',
+      last_checked_at DATETIME DEFAULT NULL,
+      post_title VARCHAR(500) DEFAULT NULL,
+      keyword VARCHAR(500) DEFAULT NULL,
+      target_url VARCHAR(1000) DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS backlink_queue (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      social_account_id INT DEFAULT 0,
+      platform VARCHAR(64) NOT NULL,
+      keyword VARCHAR(500) DEFAULT NULL,
+      target_url VARCHAR(1000) DEFAULT NULL,
+      post_image VARCHAR(255) DEFAULT NULL,
+      status VARCHAR(32) DEFAULT 'pending',
+      published_url TEXT DEFAULT NULL,
+      error_message TEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS keywords (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      keyword VARCHAR(500) NOT NULL,
+      volume INT DEFAULT 0,
+      cpc DECIMAL(10,2) DEFAULT 0.00,
+      competition DECIMAL(10,2) DEFAULT 0.00,
+      seo_difficulty INT DEFAULT NULL,
+      score INT DEFAULT 0,
+      status VARCHAR(32) DEFAULT 'Pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS seo_reports (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      rank INT DEFAULT 0,
+      seo_score INT DEFAULT 0,
+      report_date DATE NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS project_meta (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL UNIQUE,
+      meta_title VARCHAR(500) DEFAULT NULL,
+      meta_description TEXT DEFAULT NULL,
+      meta_keywords TEXT DEFAULT NULL,
+      og_title VARCHAR(500) DEFAULT NULL,
+      og_description TEXT DEFAULT NULL,
+      og_image VARCHAR(500) DEFAULT NULL,
+      h1_suggestion VARCHAR(500) DEFAULT NULL,
+      schema_json LONGTEXT DEFAULT NULL,
+      full_head_html LONGTEXT DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS content_queue (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      title VARCHAR(500) NOT NULL,
+      article LONGTEXT NOT NULL,
+      status VARCHAR(32) DEFAULT 'draft',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS onpage_issues (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      type VARCHAR(64) NOT NULL,
+      detail TEXT NOT NULL,
+      severity VARCHAR(32) DEFAULT 'medium',
+      fix TEXT DEFAULT NULL,
+      status VARCHAR(32) DEFAULT 'open',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS keyword_rankings_log (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      keyword VARCHAR(500) NOT NULL,
+      position INT NOT NULL,
+      logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    CREATE TABLE IF NOT EXISTS broken_internal_links (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      project_id INT NOT NULL,
+      source_url VARCHAR(1000) NOT NULL,
+      broken_url VARCHAR(1000) NOT NULL,
+      status_code INT NOT NULL,
+      found_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ";
+    foreach (array_filter(array_map('trim', explode(';', $schema))) as $stmt) {
+        if ($stmt !== '') {
+            $pdo->exec($stmt);
+        }
+    }
+    $count = (int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    if ($count === 0) {
+        $hash = password_hash($superPass, PASSWORD_BCRYPT);
+        $apiKey = 'sky_' . bin2hex(random_bytes(16));
+        $ins = $pdo->prepare('INSERT INTO users (username, password, email, role, api_key) VALUES (?, ?, ?, ?, ?)');
+        $ins->execute([$superUser, $hash, $superEmail, 'admin', $apiKey]);
+    }
+}
+
+function isPostgresDbType(): bool {
+    return in_array(strtolower((string)DB_TYPE), ['pgsql', 'postgres', 'postgresql'], true);
+}
+
+function initPostgresDatabase(PDO $pdo, string $superUser = 'admin', string $superPass = 'admin123', string $superEmail = 'admin@skyrank.com'): void {
+    $statements = [
+        "CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username VARCHAR(191) NOT NULL UNIQUE,
+          password VARCHAR(255) NOT NULL,
+          email VARCHAR(191) NOT NULL UNIQUE,
+          role VARCHAR(50) DEFAULT 'admin',
+          api_key VARCHAR(255) DEFAULT NULL,
+          allowed_menus TEXT DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS projects (
+          id SERIAL PRIMARY KEY,
+          user_id INT NOT NULL,
+          website_url VARCHAR(1000) NOT NULL,
+          target_keyword TEXT NOT NULL,
+          target_site TEXT DEFAULT NULL,
+          package_type VARCHAR(50) DEFAULT 'basic',
+          business_name VARCHAR(255) DEFAULT '',
+          business_address TEXT DEFAULT NULL,
+          business_hours TEXT DEFAULT NULL,
+          business_desc TEXT DEFAULT NULL,
+          contact_name VARCHAR(255) DEFAULT '',
+          phone VARCHAR(50) DEFAULT '',
+          email VARCHAR(255) DEFAULT '',
+          gsc_access TEXT DEFAULT NULL,
+          ga_access TEXT DEFAULT NULL,
+          google_ads_id VARCHAR(100) DEFAULT NULL,
+          admin_url VARCHAR(255) DEFAULT '',
+          admin_user VARCHAR(255) DEFAULT '',
+          admin_pass TEXT DEFAULT NULL,
+          competitor_sites TEXT DEFAULT NULL,
+          post_image VARCHAR(255) DEFAULT NULL,
+          seo_score INT DEFAULT NULL,
+          pagespeed_score INT DEFAULT NULL,
+          pagespeed_mobile_score INT DEFAULT NULL,
+          pagespeed_desktop_score INT DEFAULT NULL,
+          pagespeed_metrics_json TEXT DEFAULT NULL,
+          pagespeed_checked_at TIMESTAMP DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS social_accounts (
+          id SERIAL PRIMARY KEY,
+          user_id INT NOT NULL,
+          project_id INT NOT NULL DEFAULT 0,
+          platform VARCHAR(64) NOT NULL,
+          username VARCHAR(255) NOT NULL,
+          password TEXT DEFAULT NULL,
+          api_key TEXT DEFAULT NULL,
+          api_secret TEXT DEFAULT NULL,
+          refresh_token TEXT DEFAULT NULL,
+          status VARCHAR(32) DEFAULT 'active',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS backlinks (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          backlink_url VARCHAR(1000) NOT NULL,
+          platform VARCHAR(64) NOT NULL,
+          da_score INT DEFAULT 70,
+          status VARCHAR(32) DEFAULT 'created',
+          verified_status VARCHAR(32) DEFAULT 'unverified',
+          last_checked_at TIMESTAMP DEFAULT NULL,
+          post_title VARCHAR(500) DEFAULT NULL,
+          keyword VARCHAR(500) DEFAULT NULL,
+          target_url VARCHAR(1000) DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS backlink_queue (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          social_account_id INT DEFAULT 0,
+          platform VARCHAR(64) NOT NULL,
+          keyword VARCHAR(500) DEFAULT NULL,
+          target_url VARCHAR(1000) DEFAULT NULL,
+          post_image VARCHAR(255) DEFAULT NULL,
+          status VARCHAR(32) DEFAULT 'pending',
+          published_url TEXT DEFAULT NULL,
+          error_message TEXT DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS keywords (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          keyword VARCHAR(500) NOT NULL,
+          volume INT DEFAULT 0,
+          cpc NUMERIC(10,2) DEFAULT 0.00,
+          competition NUMERIC(10,2) DEFAULT 0.00,
+          seo_difficulty INT DEFAULT NULL,
+          score INT DEFAULT 0,
+          status VARCHAR(32) DEFAULT 'Pending',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS seo_reports (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          rank INT DEFAULT 0,
+          seo_score INT DEFAULT 0,
+          report_date DATE NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS project_meta (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL UNIQUE,
+          meta_title VARCHAR(500) DEFAULT NULL,
+          meta_description TEXT DEFAULT NULL,
+          meta_keywords TEXT DEFAULT NULL,
+          og_title VARCHAR(500) DEFAULT NULL,
+          og_description TEXT DEFAULT NULL,
+          og_image VARCHAR(500) DEFAULT NULL,
+          h1_suggestion VARCHAR(500) DEFAULT NULL,
+          schema_json TEXT DEFAULT NULL,
+          full_head_html TEXT DEFAULT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS content_queue (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          title VARCHAR(500) NOT NULL,
+          article TEXT NOT NULL,
+          status VARCHAR(32) DEFAULT 'draft',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS onpage_issues (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          type VARCHAR(64) NOT NULL,
+          detail TEXT NOT NULL,
+          severity VARCHAR(32) DEFAULT 'medium',
+          fix TEXT DEFAULT NULL,
+          status VARCHAR(32) DEFAULT 'open',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS keyword_rankings_log (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          keyword VARCHAR(500) NOT NULL,
+          position INT NOT NULL,
+          logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+        "CREATE TABLE IF NOT EXISTS broken_internal_links (
+          id SERIAL PRIMARY KEY,
+          project_id INT NOT NULL,
+          source_url VARCHAR(1000) NOT NULL,
+          broken_url VARCHAR(1000) NOT NULL,
+          status_code INT NOT NULL,
+          found_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )",
+    ];
+    foreach ($statements as $sql) {
+        $pdo->exec($sql);
+    }
+    $count = (int)$pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
+    if ($count === 0) {
+        $hash = password_hash($superPass, PASSWORD_BCRYPT);
+        $apiKey = 'sky_' . bin2hex(random_bytes(16));
+        $ins = $pdo->prepare('INSERT INTO users (username, password, email, role, api_key) VALUES (?, ?, ?, ?, ?)');
+        $ins->execute([$superUser, $hash, $superEmail, 'admin', $apiKey]);
+    }
+}
+
 function getDB() {
     static $pdo = null;
     if ($pdo === null) {
@@ -281,9 +613,16 @@ function getDB() {
                 if ($isNew) {
                     initSqliteDatabase($pdo);
                 }
-            } else {
+            } elseif (isPostgresDbType()) {
+                $host = DB_HOST;
+                if (str_starts_with($host, '/cloudsql/')) {
+                    $dsn = 'pgsql:host=' . $host . ';dbname=' . DB_NAME;
+                } else {
+                    $port = (string) seoCfg('DB_PORT', '5432');
+                    $dsn = 'pgsql:host=' . $host . ';port=' . $port . ';dbname=' . DB_NAME;
+                }
                 $pdo = new PDO(
-                    'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
+                    $dsn,
                     DB_USER,
                     DB_PASS,
                     [
@@ -292,6 +631,33 @@ function getDB() {
                         PDO::ATTR_EMULATE_PREPARES   => false,
                     ]
                 );
+                try {
+                    $pdo->query('SELECT 1 FROM users LIMIT 1');
+                } catch (Throwable $e) {
+                    initPostgresDatabase($pdo);
+                }
+            } else {
+                $host = DB_HOST;
+                if (str_starts_with($host, '/cloudsql/')) {
+                    $dsn = 'mysql:unix_socket=' . $host . ';dbname=' . DB_NAME . ';charset=utf8mb4';
+                } else {
+                    $dsn = 'mysql:host=' . $host . ';dbname=' . DB_NAME . ';charset=utf8mb4';
+                }
+                $pdo = new PDO(
+                    $dsn,
+                    DB_USER,
+                    DB_PASS,
+                    [
+                        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                        PDO::ATTR_EMULATE_PREPARES   => false,
+                    ]
+                );
+                try {
+                    $pdo->query('SELECT 1 FROM users LIMIT 1');
+                } catch (Throwable $e) {
+                    initMysqlDatabase($pdo);
+                }
             }
             // Self-healing migration
             try {
