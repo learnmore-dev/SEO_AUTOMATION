@@ -115,11 +115,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_report_ajax'])) 
     $weekAgo = date('Y-m-d', strtotime('-7 days'));
     $today   = date('Y-m-d');
 
-    $rankNow  = $db->prepare("SELECT `rank` FROM seo_reports WHERE project_id=? AND `rank` > 0 ORDER BY report_date DESC LIMIT 1");
+    $rankCol = seoSqlId('rank');
+    $rankNow  = $db->prepare("SELECT {$rankCol} FROM seo_reports WHERE project_id=? AND {$rankCol} > 0 ORDER BY report_date DESC LIMIT 1");
     $rankNow->execute([$projectId]);
     $rankNow = $rankNow->fetchColumn() ?: 0;
 
-    $rankWeekAgo = $db->prepare("SELECT `rank` FROM seo_reports WHERE project_id=? AND `rank` > 0 AND report_date <= ? ORDER BY report_date DESC LIMIT 1");
+    $rankWeekAgo = $db->prepare("SELECT {$rankCol} FROM seo_reports WHERE project_id=? AND {$rankCol} > 0 AND report_date <= ? ORDER BY report_date DESC LIMIT 1");
     $rankWeekAgo->execute([$projectId, $weekAgo]);
     $rankWeekAgo = $rankWeekAgo->fetchColumn() ?: 0;
 

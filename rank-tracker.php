@@ -2,6 +2,7 @@
 require_once 'config.php';
 requireLogin();
 $db = getDB();
+$rankCol = seoSqlId('rank');
 $projectId = (int)($_GET['id'] ?? 0);
 $isAjax = isset($_GET['ajax']);
 $isRun  = isset($_GET['run']);
@@ -153,10 +154,10 @@ if ($isRun || $isAjax) {
     $existing = $db->prepare("SELECT id FROM seo_reports WHERE project_id=? AND report_date=?");
     $existing->execute([$projectId, $today]);
     if ($existing->fetch()) {
-        $db->prepare("UPDATE seo_reports SET `rank`=? WHERE project_id=? AND report_date=?")
+        $db->prepare("UPDATE seo_reports SET {$rankCol}=? WHERE project_id=? AND report_date=?")
            ->execute([$rank, $projectId, $today]);
     } else {
-        $db->prepare("INSERT INTO seo_reports (project_id, `rank`, report_date) VALUES (?,?,?)")
+        $db->prepare("INSERT INTO seo_reports (project_id, {$rankCol}, report_date) VALUES (?,?,?)")
            ->execute([$projectId, $rank, $today]);
     }
     $db->prepare("INSERT INTO rank_history (project_id, keyword, rank_position) VALUES (?,?,?)")
@@ -170,11 +171,12 @@ if ($isRun || $isAjax) {
 }
 
 // Fetch rank history for chart
-$history = $db->prepare("SELECT DATE(checked_at) as date, MIN(rank_position) as rank FROM rank_history WHERE project_id=? AND rank_position > 0 GROUP BY DATE(checked_at) ORDER BY date DESC LIMIT 30");
+$checkedDay = seoSqlCastDate('checked_at');
+$history = $db->prepare("SELECT {$checkedDay} as date, MIN(rank_position) as rank FROM rank_history WHERE project_id=? AND rank_position > 0 GROUP BY {$checkedDay} ORDER BY date DESC LIMIT 30");
 $history->execute([$projectId]);
 $history = array_reverse($history->fetchAll());
 
-$latestRank = $db->prepare("SELECT `rank` FROM seo_reports WHERE project_id=? AND `rank` > 0 ORDER BY report_date DESC LIMIT 1");
+$latestRank = $db->prepare("SELECT {$rankCol} FROM seo_reports WHERE project_id=? AND {$rankCol} > 0 ORDER BY report_date DESC LIMIT 1");
 $latestRank->execute([$projectId]);
 $latestRank = $latestRank->fetchColumn() ?: 0;
 ?>

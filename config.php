@@ -425,6 +425,41 @@ function isPostgresDbType(): bool {
     return in_array(strtolower((string)DB_TYPE), ['pgsql', 'postgres', 'postgresql'], true);
 }
 
+function isMysqlDbType(): bool {
+    return strtolower((string) DB_TYPE) === 'mysql';
+}
+
+/** Quote SQL identifiers (e.g. reserved column `rank`). */
+function seoSqlId(string $name): string {
+    if (isPostgresDbType()) {
+        return '"' . str_replace('"', '""', $name) . '"';
+    }
+    if (isMysqlDbType()) {
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+    return $name;
+}
+
+function seoSqlCastDate(string $column): string {
+    if (isPostgresDbType()) {
+        return '(' . $column . ')::date';
+    }
+    if (isMysqlDbType()) {
+        return 'DATE(' . $column . ')';
+    }
+    return 'date(' . $column . ')';
+}
+
+function seoSqlToday(): string {
+    if (isPostgresDbType()) {
+        return 'CURRENT_DATE';
+    }
+    if (isMysqlDbType()) {
+        return 'CURDATE()';
+    }
+    return "date('now')";
+}
+
 function initPostgresDatabase(PDO $pdo, string $superUser = 'admin', string $superPass = 'admin123', string $superEmail = 'admin@skyrank.com'): void {
     $statements = [
         "CREATE TABLE IF NOT EXISTS users (
@@ -523,7 +558,7 @@ function initPostgresDatabase(PDO $pdo, string $superUser = 'admin', string $sup
         "CREATE TABLE IF NOT EXISTS seo_reports (
           id SERIAL PRIMARY KEY,
           project_id INT NOT NULL,
-          rank INT DEFAULT 0,
+          \"rank\" INT DEFAULT 0,
           seo_score INT DEFAULT 0,
           report_date DATE NOT NULL,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

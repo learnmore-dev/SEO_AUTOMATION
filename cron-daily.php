@@ -6,6 +6,7 @@
 require_once __DIR__ . '/config.php';
 
 $db = getDB();
+$rankCol = seoSqlId('rank');
 $log = [];
 $log[] = '[' . date('Y-m-d H:i:s') . '] Daily cron started';
 
@@ -24,10 +25,10 @@ foreach ($projects as $project) {
     $existing = $db->prepare("SELECT id FROM seo_reports WHERE project_id=? AND report_date=?");
     $existing->execute([$project['id'], $today]);
     if ($existing->fetch()) {
-        $db->prepare("UPDATE seo_reports SET `rank`=? WHERE project_id=? AND report_date=?")
+        $db->prepare("UPDATE seo_reports SET {$rankCol}=? WHERE project_id=? AND report_date=?")
            ->execute([$rank, $project['id'], $today]);
     } else {
-        $db->prepare("INSERT INTO seo_reports (project_id, `rank`, report_date) VALUES (?,?,?)")
+        $db->prepare("INSERT INTO seo_reports (project_id, {$rankCol}, report_date) VALUES (?,?,?)")
            ->execute([$project['id'], $rank, $today]);
     }
     $db->prepare("INSERT INTO rank_history (project_id, keyword, rank_position) VALUES (?,?,?)")
@@ -36,7 +37,7 @@ foreach ($projects as $project) {
     $log[] = "  → Rank for '{$project['target_keyword']}': " . ($rank > 0 ? "#$rank" : "Not found");
 
     // 2. Check for rank drop (alert if dropped more than 5 positions)
-    $prevRank = $db->prepare("SELECT `rank` FROM seo_reports WHERE project_id=? AND `rank` > 0 AND report_date < ? ORDER BY report_date DESC LIMIT 1");
+    $prevRank = $db->prepare("SELECT {$rankCol} FROM seo_reports WHERE project_id=? AND {$rankCol} > 0 AND report_date < ? ORDER BY report_date DESC LIMIT 1");
     $prevRank->execute([$project['id'], $today]);
     $prevRank = $prevRank->fetchColumn();
 

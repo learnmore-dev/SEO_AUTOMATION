@@ -32,10 +32,11 @@ if (isset($_GET['delete_project'])) {
 }
 
 // Fetch Projects
+$rankCol = seoSqlId('rank');
 $projectsStmt = $db->prepare("
     SELECT p.*,
         (SELECT COUNT(*) FROM backlinks b WHERE b.project_id = p.id AND b.status='created') AS backlinks_count,
-        (SELECT `rank` FROM seo_reports WHERE project_id = p.id ORDER BY report_date DESC LIMIT 1) AS current_rank,
+        (SELECT {$rankCol} FROM seo_reports WHERE project_id = p.id ORDER BY report_date DESC LIMIT 1) AS current_rank,
         (SELECT seo_score FROM seo_reports WHERE project_id = p.id ORDER BY report_date DESC LIMIT 1) AS latest_score
     FROM projects p WHERE p.user_id = ?
     ORDER BY p.created_at DESC
@@ -55,8 +56,10 @@ $pendingPercent = $totalSubmissions > 0 ? round(($pendingCount / $totalSubmissio
 $failedPercent  = $totalSubmissions > 0 ? (100 - $successPercent - $pendingPercent) : 3;
 
 // Today Stats
-$todaySuccess = (int)$db->query("SELECT COUNT(*) FROM backlinks WHERE date(created_at) = date('now')")->fetchColumn();
-$todayFailed  = (int)$db->query("SELECT COUNT(*) FROM backlink_queue WHERE status='failed' AND date(created_at) = date('now')")->fetchColumn();
+$createdDay = seoSqlCastDate('created_at');
+$todayExpr = seoSqlToday();
+$todaySuccess = (int)$db->query("SELECT COUNT(*) FROM backlinks WHERE {$createdDay} = {$todayExpr}")->fetchColumn();
+$todayFailed  = (int)$db->query("SELECT COUNT(*) FROM backlink_queue WHERE status='failed' AND {$createdDay} = {$todayExpr}")->fetchColumn();
 
 // Keywords Count (Distinct keywords from projects & backlinks)
 $kwList = [];

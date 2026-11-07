@@ -3,9 +3,11 @@
 // cron-weekly.php - Run every Monday at 9 AM
 // Cron: 0 9 * * 1 php /path/to/seo-system/cron-weekly.php
 // ============================================================
+require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/includes/mailer.php';
 
 $db = getDB();
+$rankCol = seoSqlId('rank');
 $log = [];
 $log[] = '[' . date('Y-m-d H:i:s') . '] Weekly cron started';
 
@@ -24,11 +26,11 @@ foreach ($projects as $project) {
     $weekAgo = date('Y-m-d', strtotime('-7 days'));
     $today   = date('Y-m-d');
 
-    $rankNow  = $db->prepare("SELECT `rank` FROM seo_reports WHERE project_id=? AND `rank` > 0 ORDER BY report_date DESC LIMIT 1");
+    $rankNow  = $db->prepare("SELECT {$rankCol} FROM seo_reports WHERE project_id=? AND {$rankCol} > 0 ORDER BY report_date DESC LIMIT 1");
     $rankNow->execute([$project['id']]);
     $rankNow = $rankNow->fetchColumn() ?: 0;
 
-    $rankWeekAgo = $db->prepare("SELECT `rank` FROM seo_reports WHERE project_id=? AND `rank` > 0 AND report_date <= ? ORDER BY report_date DESC LIMIT 1");
+    $rankWeekAgo = $db->prepare("SELECT {$rankCol} FROM seo_reports WHERE project_id=? AND {$rankCol} > 0 AND report_date <= ? ORDER BY report_date DESC LIMIT 1");
     $rankWeekAgo->execute([$project['id'], $weekAgo]);
     $rankWeekAgo = $rankWeekAgo->fetchColumn() ?: 0;
 
