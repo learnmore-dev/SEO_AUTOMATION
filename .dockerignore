@@ -14,6 +14,8 @@ logs/*
 uploads/*
 !uploads/.gitkeep
 scratch/
+selenium/
+deploy/
 selenium/chrome_profile*/
 selenium/chrome_profile_*/
 selenium/**/chrome_profile*/
